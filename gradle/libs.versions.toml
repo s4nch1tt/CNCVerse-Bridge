@@ -8,6 +8,7 @@ serialization = "1.8.1"
 coil = "3.2.0"
 desugar_jdk_libs = "2.1.5"
 dex2jar = "2.4.37"
+asm = "9.7.1"
 okhttp = "5.0.0-alpha.14"
 jsoup = "1.18.1"
 jackson = "2.16.1"
@@ -57,6 +58,12 @@ dex-tools = { module = "de.femtopedia.dex2jar:dex-tools", version.ref = "dex2jar
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 jackson-module-kotlin = { module = "com.fasterxml.jackson.module:jackson-module-kotlin", version.ref = "jackson" }
+# ASM — required at runtime by dex2jar (ClassRemapper) and by PluginBytecodeTransformer
+asm = { module = "org.ow2.asm:asm", version.ref = "asm" }
+asm-commons = { module = "org.ow2.asm:asm-commons", version.ref = "asm" }
+asm-tree = { module = "org.ow2.asm:asm-tree", version.ref = "asm" }
+asm-analysis = { module = "org.ow2.asm:asm-analysis", version.ref = "asm" }
+asm-util = { module = "org.ow2.asm:asm-util", version.ref = "asm" }
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

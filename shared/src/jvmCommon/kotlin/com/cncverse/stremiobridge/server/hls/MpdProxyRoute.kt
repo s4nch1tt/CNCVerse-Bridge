@@ -26,6 +26,8 @@ fun Application.installMpdProxyRoutes() {
         head("/proxy/mpd/manifest.m3u8") { handleMpdProxy(call, mpdConverter) }
         head("/decrypt") { DecryptHandler.handleDecryptSegment(call) }
         head("/init_decrypt") { DecryptHandler.handleInitDecrypt(call) }
+        get("/proxy/subtitle") { handleSubtitleProxy(call) }
+        head("/proxy/subtitle") { handleSubtitleProxy(call) }
     }
 }
 
@@ -101,4 +103,41 @@ private suspend fun handleMpdProxy(call: ApplicationCall, converter: MpdConverte
 private fun buildClearKey(keyId: String?, key: String?): String? {
     if (keyId.isNullOrBlank() || key.isNullOrBlank()) return null
     return "$keyId:$key"
+}
+
+private suspend fun handleSubtitleProxy(call: ApplicationCall) {
+    try {
+        val destinationUrl = call.request.queryParameters["url"]
+            ?: return call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing 'url' parameter"))
+            
+        val decodedUrl = URLDecoder.decode(destinationUrl, "UTF-8")
+        val queryParams = call.request.queryParameters.entries().associate { it.key to it.value.firstOrNull().orEmpty() }
+        val customHeaders = HttpClientManager.extractHeadersFromParams(queryParams)
+
+        ServerState.info("SUBTITLE_PROXY: url=${decodedUrl.take(100)}")
+
+        if (call.request.httpMethod == HttpMethod.Head) {
+            call.respond(HttpStatusCode.OK)
+            return
+        }
+
+        val content = withContext(Dispatchers.IO) {
+            HttpClientManager.getString(url = decodedUrl, headers = customHeaders, proxyUrl = null)
+        }
+
+        call.response.headers.append(HttpHeaders.AccessControlAllowOrigin, "*")
+        call.response.headers.append(HttpHeaders.CacheControl, "no-store")
+        
+        val contentType = when {
+            decodedUrl.contains(".vtt", ignoreCase = true) -> ContentType.parse("text/vtt")
+            decodedUrl.contains(".srt", ignoreCase = true) -> ContentType.parse("application/x-subrip")
+            else -> ContentType.Text.Plain
+        }
+        call.respondText(content, contentType)
+
+    } catch (e: kotlinx.coroutines.CancellationException) {
+    } catch (e: Exception) {
+        ServerState.warn("SUBTITLE_PROXY_ERR: ${e.message}")
+        try { call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Subtitle proxy error: ${e.message}")) } catch (_: Exception) {}
+    }
 }

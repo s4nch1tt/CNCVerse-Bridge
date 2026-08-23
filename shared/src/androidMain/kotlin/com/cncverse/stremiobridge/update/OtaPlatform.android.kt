@@ -5,6 +5,8 @@ import androidx.core.content.FileProvider
 import com.cncverse.stremiobridge.repo.AndroidContextHolder
 import java.io.File
 
+actual val isDesktopPlatform: Boolean = false
+
 actual fun getOtaDownloadDir(): String {
     val context = AndroidContextHolder.appContext
     val dir = File(context.externalCacheDir, "ota_updates")

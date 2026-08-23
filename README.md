@@ -1,41 +1,70 @@
 # CNCVerse Bridge
 
-An application addon to run cloudstream extensions on Nuvio, Stremio, and every other Stremio-supported platform.
-
-## Note: This app is completely in alpha stage, you may experience bugs, crashes etc. Join community to report and fix bugs. If you are a developer a PR for fixes are welcomed
-
-### 💬 Community
-
-Join our Telegram group to discuss extensions, request features, or report issues:  
-
 [![Join us on Telegram](https://img.shields.io/badge/Telegram-Join%20Group-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/cncverse)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support%20Project-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/nivincnc)
 
-## Getting Started
+An application addon to run Cloudstream extensions on Nuvio, Stremio, and every other Stremio-supported platform.
 
-Follow these steps to download and set up CNCVerse Bridge on your Android device.
+> **Note:** This app is currently in the alpha stage. You may experience bugs or crashes. Join our community to report issues! If you are a developer, PRs for fixes are always welcome.
 
-### 1. Download
-- Go to the **[Releases](../../releases)** page of this repository on your Android device.
-- Download the latest `.apk` file for CNCVerse Bridge.
+## Downloads
 
-### 2. Install and Run the App
-- Open your file manager or downloads folder and tap on the downloaded `.apk` file to install it. 
-  *(Note: You may need to allow "Install unknown apps" in your Android settings if prompted).*
-- Once installed, open the CNCVerse Bridge app.
-- The app will run a local server in the background and display an addon URL on the screen.
+CNCVerse Bridge is available for both Android and Desktop (Windows).
 
-### 3. Final Setup in Stremio / Nuvio
-To use CNCVerse Bridge with your media center on the same device:
-1. Copy the addon URL provided within the CNCVerse Bridge app (e.g., `http://127.0.0.1:8080/manifest.json`) (Make sure to enable stremio mode if on stremio).
-2. Open the **Stremio** or **Nuvio** app on your Android device.
-3. Navigate to the **Addons** section.
+Go to the **[Releases](../../releases)** page to download:
+- **Android:** Download the `.apk` file.
+- **Desktop:** Download the `.msi` or `.exe` file for windows.
+
+---
+
+## Getting Started (Android)
+
+1. **Install and Run:** Install the downloaded `.apk` and open the CNCVerse Bridge app.
+2. **Start Server:** The app will run a local server in the background and display an addon URL on the screen (e.g., `http://127.0.0.1:8080/manifest.json`).
+
+### Usage with Stremio
+
+1. Copy the addon URL provided in the CNCVerse Bridge app.
+2. **Important:** Enable the "Stremio Mode" toggle in the CNCVerse Bridge app if you are using it with Stremio.
+3. Open the **Stremio** app and go to the **Addons** section.
 4. Paste the copied URL into the search bar or addon URL field.
-5. Tap **Install** to add the CNCVerse Bridge addon to your platform.
+5. Tap **Install** to add the CNCVerse Bridge addon.
 
-You are now ready to stream using Cloudstream extensions!
+### Usage with Nuvio
+
+1. Ensure the CNCVerse Bridge app is running in the background.
+2. Open the **Nuvio** app.
+3. Nuvio will automatically detect the local CNCVerse Bridge addon—no manual URL pasting is required!
+
+---
+
+## Getting Started (Desktop)
+
+1. **Install and Run:** Install the `.msi` (Windows) or run the desktop app. 
+2. The app will launch and display the server status and the local addon URL.
+3. **Same-Device Streaming:** If you run Stremio on the same computer, you can click the **Add to Stremio** button or manually add `http://127.0.0.1:8080/manifest.json` in Stremio.
+4. **Local Network Streaming:** You can also use the Desktop app to host the bridge for other devices on your Wi-Fi network. Simply use the local IP address shown in the app (e.g., `http://192.168.1.100:8080/manifest.json`) on your TV or phone.
+
+### ⚠️ Desktop Limitations
+
+Currently, the Desktop version lacks full **WebView support**. This means:
+- Features relying on Cloudflare bypass (which uses a hidden WebView) will not work.
+- FebBox / ShowBox login flows that require a web interface will fail.
+For full compatibility with these specific providers, please use the Android version.
+
+---
+
+## Support & Community
+
+Join our **[Telegram group](https://t.me/cncverse)** to discuss extensions, request features, or report issues.
+
+If you find this project useful, consider supporting the development!  
+**[☕ Buy Me a Coffee](https://buymeacoffee.com/nivincnc)**
+
+---
 
 ## License
 
 All rights reserved. No part of this codebase may be copied, modified, distributed, or otherwise used without explicit permission from the copyright owner.
 
-**Note:** Files originating from the Cloudstream project are from the Cloudstream repository. Those files retain their original licenses and copyright notices as applicable under the Cloudstream project and are not covered by this proprietary license. See the [LICENSE](LICENSE) file for more details.
+**Note:** Files originating from the Cloudstream project retain their original licenses and copyright notices as applicable under the Cloudstream project and are not covered by this proprietary license. See the [LICENSE](LICENSE) file for more details.

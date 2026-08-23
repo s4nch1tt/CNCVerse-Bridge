@@ -1,4 +1,9 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import java.util.Properties
+
+val versionProps = Properties().apply {
+    file("${rootDir}/version.properties").inputStream().use { load(it) }
+}
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
@@ -21,12 +26,23 @@ kotlin {
             dependencies {
                 implementation(project(":shared"))
                 implementation(compose.desktop.currentOs)
+                implementation(compose.material3)
+                implementation(compose.materialIconsExtended)
+                implementation(compose.foundation)
                 implementation("org.jetbrains.compose.material3:material3-window-size-class:1.7.3")
                 implementation(libs.kotlinx.coroutines.swing)
 
                 // dex2jar for converting .cs3 DEX → .jar at runtime
                 implementation(libs.dex2jar)
                 implementation(libs.dex.tools)
+
+                // ASM — dex2jar needs it at runtime (ClassRemapper); also used by
+                // PluginBytecodeTransformer to neuter Android UI calls
+                implementation(libs.asm)
+                implementation(libs.asm.commons)
+                implementation(libs.asm.tree)
+                implementation(libs.asm.analysis)
+                implementation(libs.asm.util)
 
                 // Plugin runtime dependencies (on the classpath when loading converted plugins)
                 implementation(libs.okhttp)
@@ -42,8 +58,12 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
-            packageName = "CNCVerse Stremio Bridge"
-            packageVersion = "1.0.0"
+            // jdk.zipfs — dex2jar writes converted jars via the zip filesystem provider
+            // jdk.unsupported / java.scripting — commonly needed by plugin libraries
+            // (sun.misc.Unsafe, Rhino JS eval)
+            modules("jdk.zipfs", "jdk.unsupported", "java.scripting", "java.naming")
+            packageName = "CNCVerse Bridge"
+            packageVersion = versionProps.getProperty("desktop.versionName", "0.0.22")
             description = "Stremio addon server powered by CNCVerse CS3 plugins"
             vendor = "CNCVerse"
 
@@ -53,6 +73,11 @@ compose.desktop {
                 iconFile.set(project.file("src/main/resources/icon.ico"))
                 shortcut = true
             }
+        }
+
+        // Disable ProGuard to avoid missing class errors during release packaging
+        buildTypes.release.proguard {
+            isEnabled.set(false)
         }
 
         // JVM args for the desktop app

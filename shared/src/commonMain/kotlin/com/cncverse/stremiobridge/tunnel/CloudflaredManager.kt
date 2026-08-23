@@ -12,7 +12,7 @@ import java.io.File
 import java.io.InputStreamReader
 
 object CloudflaredManager {
-    private const val WORKER_URL = "xxxxxxxx"
+    private const val WORKER_URL = "xxxxxxxxx"
 
     private var tunnelProcess: Process? = null
     private var tunnelScope: CoroutineScope? = null
@@ -75,9 +75,13 @@ object CloudflaredManager {
             }
             if (response.status.value in 200..299) {
                 val responseText = response.bodyAsText()
+                ServerState.info("Tunnel Token fetched successfully: $responseText")
                 // Simple regex to extract token from JSON {"success":true,"token":"...","domain":"..."}
                 val match = Regex("\"token\":\"([^\"]+)\"").find(responseText)
                 return@withContext match?.groupValues?.get(1)
+            }
+            else{
+                ServerState.error("Failed to fetch tunnel token: HTTP ${response.status.value} Body: ${response.bodyAsText()}")
             }
         } catch (e: Exception) {
             ServerState.warn("Failed to fetch tunnel token: ${e.message}")
@@ -101,18 +105,15 @@ object CloudflaredManager {
 
         scope.launch {
             try {
-                // Fetch or load cached token
-                var token = DeviceIdManager.getTunnelToken()
-                if (token.isNullOrBlank()) {
-                    ServerState.info("Fetching new Tunnel Token from Worker...")
-                    val deviceId = DeviceIdManager.getDeviceId()
-                    token = fetchTunnelToken(deviceId)
-                    if (token != null) {
-                        DeviceIdManager.setTunnelToken(token)
-                    } else {
-                        ServerState.error("Failed to provision Cloudflare Tunnel")
-                        return@launch
-                    }
+                // Always fetch a fresh token from the worker on every start
+                ServerState.info("Fetching Tunnel Token from Worker...")
+                val deviceId = DeviceIdManager.getDeviceId()
+                val token = fetchTunnelToken(deviceId)
+                if (token != null) {
+                    DeviceIdManager.setTunnelToken(token)
+                } else {
+                    ServerState.error("Failed to provision Cloudflare Tunnel")
+                    return@launch
                 }
 
                 ServerState.info("Starting Cloudflare Tunnel on port $port ...")

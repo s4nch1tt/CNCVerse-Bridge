@@ -275,6 +275,17 @@ object StremioServer {
                 val streams = withContext(Dispatchers.IO) { buildStreams(type, id) }
                 call.respond(StremioStreamResponse(streams))
             }
+
+            // ── Subtitles ────────────────────────────────────────────────────
+            get("/subtitles/{type}/{id}.json") {
+                val type = call.parameters["type"] ?: return@get call.respond(HttpStatusCode.BadRequest)
+                val id   = call.parameters["id"]   ?: return@get call.respond(HttpStatusCode.BadRequest)
+
+                val streams = withContext(Dispatchers.IO) { buildStreams(type, id) }
+                val subtitles = streams.flatMap { it.subtitles ?: emptyList() }.distinctBy { it.id }
+                
+                call.respond(StremioSubtitleResponse(subtitles))
+            }
         }
     }
 
@@ -318,7 +329,7 @@ object StremioServer {
             description = "CS3 plugin bridge for Stremio — powered by CNCVerse extensions",
             logo        = "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/refs/heads/builds/cnc.png",
             types       = types,
-            resources   = listOf("catalog", "meta", "stream"),
+            resources   = listOf("catalog", "meta", "stream", "subtitles"),
             catalogs    = catalogs,
         )
     }
@@ -523,7 +534,7 @@ object StremioServer {
         }
         return """<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
-<title>CNCVerse Stremio Bridge</title>
+<title>CNCVerse Bridge</title>
 <style>
   body{background:#0f0f1a;color:#e0e0f0;font-family:sans-serif;padding:2rem}
   h1{color:#a78bfa}
@@ -532,7 +543,7 @@ object StremioServer {
   th{background:#1a1a2e}
   .btn{display:inline-block;margin-top:1rem;padding:.75rem 1.5rem;background:#7c3aed;color:#fff;border-radius:.5rem;text-decoration:none;font-weight:bold}
 </style></head><body>
-<h1>&#127916; CNCVerse Stremio Bridge</h1>
+<h1>&#127916; CNCVerse Bridge</h1>
 <p>Loaded plugins: <strong>${loadedApis.size}</strong></p>
 <a class="btn" href="stremio://localhost:${ServerState.serverPort}/manifest.json">&#9654; Add to Stremio</a>
 <table><thead><tr><th>Name</th><th>Internal</th><th>Types</th><th>Status</th><th>Action</th></tr></thead>

@@ -43,11 +43,22 @@ object OtaUpdater {
             val response = httpClient.get(GITHUB_API_URL)
             if (response.status.value in 200..299) {
                 val release: GithubRelease = response.body()
-                val latestVersion = release.tagName.removePrefix("v")
-                val currentVersion = Constants.APP_VERSION
+                // Support dual-tag format like v0.0.22-d0.0.22
+                val rawTag = release.tagName.removePrefix("v")
+                
+                val currentVersion = if (isDesktopPlatform) Constants.DESKTOP_VERSION else Constants.ANDROID_VERSION
+                val latestVersion = if (isDesktopPlatform && rawTag.contains("-d")) {
+                    rawTag.substringAfter("-d")
+                } else {
+                    rawTag.substringBefore("-d")
+                }
 
                 if (isNewerVersion(latestVersion, currentVersion)) {
-                    return@withContext release
+                    // Only prompt for update if there's an asset for our platform
+                    val hasPlatformAsset = release.assets.any { it.name.endsWith(otaAssetExtension, ignoreCase = true) }
+                    if (hasPlatformAsset) {
+                        return@withContext release
+                    }
                 }
             }
             null

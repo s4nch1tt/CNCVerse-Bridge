@@ -117,7 +117,20 @@ data class StremioStream(
     @SerialName("ytId")          val ytId: String? = null,
     @SerialName("infoHash")      val infoHash: String? = null,
     @SerialName("behaviorHints") val behaviorHints: StreamBehaviorHints? = null,
-    @SerialName("clearkey") val clearkey: String? = null,
+    @SerialName("clearkey")      val clearkey: String? = null,
+    @SerialName("subtitles")     val subtitles: List<StremioSubtitle>? = null,
+)
+
+@Serializable
+data class StremioSubtitle(
+    @SerialName("id")   val id: String,
+    @SerialName("lang") val lang: String,
+    @SerialName("url")  val url: String,
+)
+
+@Serializable
+data class StremioSubtitleResponse(
+    @SerialName("subtitles") val subtitles: List<StremioSubtitle>,
 )
 
 @Serializable

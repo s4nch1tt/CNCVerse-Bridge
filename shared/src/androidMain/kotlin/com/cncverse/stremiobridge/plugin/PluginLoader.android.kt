@@ -11,6 +11,7 @@ import com.cncverse.stremiobridge.model.SitePlugin
 import com.cncverse.stremiobridge.model.StremioStream
 import com.cncverse.stremiobridge.model.StreamBehaviorHints
 import com.cncverse.stremiobridge.model.ProxyHeaders
+import com.cncverse.stremiobridge.model.StremioSubtitle
 import com.cncverse.stremiobridge.model.toLoadedPluginInfo
 import com.cncverse.stremiobridge.model.cs3TvTypeToStremio
 import com.cncverse.stremiobridge.server.MainApiWrapper
@@ -377,19 +378,42 @@ private class ReflectionMainApiWrapper(
 
     override suspend fun loadLinks(dataUrl: String): List<StremioStream> = withContext(Dispatchers.IO) {
         val streams = mutableListOf<StremioStream>()
+        val subtitles = mutableListOf<StremioSubtitle>()
+        val seenSubtitleUrls = mutableSetOf<String>()
+        val seenStreamUrls = mutableSetOf<String>()
         try {
             val method = apiClass.methods.firstOrNull { it.name == "loadLinks" } ?: return@withContext emptyList()
             when (method.parameterCount) {
                 4 -> {
-                    val subtitleCallback: (Any) -> Unit = { }
+                    val subtitleCallback: (Any) -> Unit = { sub ->
+                        val stremioSub = sub.reflectToSubtitle(plugin.name, api)
+                        if (stremioSub != null && seenSubtitleUrls.add(stremioSub.url)) {
+                            ServerState.info("subtitle plugin=${plugin.name} lang=${stremioSub.lang} url=${stremioSub.url}")
+                            subtitles.add(stremioSub)
+                        }
+                    }
                     val linkCallback: (Any) -> Unit = { link ->
-                        streams.addAll(link.reflectToStreams(plugin.name))
+                        val newStreams = (link as Any).reflectToStreams(plugin.name, api)
+                        newStreams.forEach { st ->
+                            val u = st.url ?: st.hashCode().toString()
+                            if (seenStreamUrls.add(u)) {
+                                ServerState.info("stream plugin=${plugin.name} name=${st.name} url=${st.url}")
+                                streams.add(st)
+                            }
+                        }
                     }
                     method.invoke(api, dataUrl, false, subtitleCallback, linkCallback)
                 }
                 2 -> {
                     val linkCallback: (Any) -> Unit = { link ->
-                        streams.addAll(link.reflectToStreams(plugin.name))
+                        val newStreams = (link as Any).reflectToStreams(plugin.name, api)
+                        newStreams.forEach { st ->
+                            val u = st.url ?: st.hashCode().toString()
+                            if (seenStreamUrls.add(u)) {
+                                ServerState.info("stream plugin=${plugin.name} name=${st.name} url=${st.url}")
+                                streams.add(st)
+                            }
+                        }
                     }
                     method.invoke(api, dataUrl, linkCallback)
                 }
@@ -397,7 +421,14 @@ private class ReflectionMainApiWrapper(
         } catch (e: Throwable) {
             ServerState.warn("LoadLinks error (${plugin.name}): ${e.message}")
         }
-        streams
+        
+        val uniqueSubtitles = subtitles.distinctBy { it.url }
+        val uniqueStreams = streams.distinctBy { it.url ?: it.hashCode().toString() }
+        if (uniqueSubtitles.isNotEmpty()) {
+            uniqueStreams.map { it.copy(subtitles = uniqueSubtitles.toList()) }
+        } else {
+            uniqueStreams
+        }
     }
 
     private fun reflectString(name: String): String? = try {
@@ -723,8 +754,6 @@ private fun Any.reflectToStreams(pluginName: String, api: Any? = null): List<Str
             ServerState.info("Rewrote MPD to Proxy: $finalUrl")
         }
 
-        ServerState.info("reflectToStreams: url=$url quality=$qStr name=$n referer=$referer plugin=$pluginName interceptorHeaders=${finalHeaders.size} clearkey=$clearkeyHex")
-        
         // If we rewrote the URL (e.g. for MPD), our own proxy handles the headers, so don't ask Stremio to proxy it again.
         val passProxyHeaders = finalHeaders.isNotEmpty() && url == finalUrl
         
@@ -736,6 +765,70 @@ private fun Any.reflectToStreams(pluginName: String, api: Any? = null): List<Str
     } catch (e: Exception) {
         ServerState.warn("reflectToStreams exception plugin=$pluginName class=${this.javaClass.name}: ${e.message}")
         emptyList()
+    }
+}
+
+private fun Any.reflectToSubtitle(pluginName: String, api: Any? = null): StremioSubtitle? {
+    return try {
+        val cls = this.javaClass
+        val lang = runCatching { cls.getMethod("getLang").invoke(this) as? String }
+            .recoverCatching { cls.getField("lang").get(this) as? String }
+            .getOrNull() ?: "Unknown"
+
+        val rawUrl = runCatching { cls.getMethod("getUrl").invoke(this) as? String }
+            .recoverCatching { cls.getField("url").get(this) as? String }
+            .getOrNull() ?: return null
+
+        val h = runCatching { @Suppress("UNCHECKED_CAST") (cls.getMethod("getHeaders").invoke(this) as? Map<String, String>) }
+            .recoverCatching { @Suppress("UNCHECKED_CAST") (cls.getField("headers").get(this) as? Map<String, String>) }
+            .getOrNull()
+            
+        val hostIp = try {
+            val interfaces = java.net.NetworkInterface.getNetworkInterfaces().asSequence().toList()
+            val preferred = interfaces.filter { iface ->
+                iface.isUp && !iface.isLoopback && !iface.isPointToPoint &&
+                (iface.name.contains("wlan", ignoreCase = true) ||
+                 iface.name.contains("eth", ignoreCase = true) ||
+                 iface.name.contains("en", ignoreCase = true))
+            }
+            val candidates = if (preferred.isNotEmpty()) preferred else interfaces.filter { iface ->
+                iface.isUp && !iface.isLoopback && !iface.isPointToPoint &&
+                !iface.name.contains("p2p", ignoreCase = true) &&
+                !iface.name.contains("dummy", ignoreCase = true) &&
+                !iface.name.contains("tun", ignoreCase = true) &&
+                !iface.name.contains("rmnet", ignoreCase = true)
+            }
+            candidates
+                .flatMap { it.inetAddresses.asSequence() }
+                .filterIsInstance<java.net.Inet4Address>()
+                .filter { !it.isLoopbackAddress && it.isSiteLocalAddress }
+                .map { it.hostAddress }
+                .sorted()
+                .firstOrNull() ?: "127.0.0.1"
+        } catch (e: Exception) { "127.0.0.1" }
+        
+        var proxyBase = "http://$hostIp:" + com.cncverse.stremiobridge.state.ServerState.serverPort
+        val activeTunnel = com.cncverse.stremiobridge.state.ServerState.activeTunnelUrl.value
+        if (com.cncverse.stremiobridge.state.ServerState.isStremioMode.value && !activeTunnel.isNullOrBlank()) {
+            proxyBase = activeTunnel
+        }
+
+        val headerParams = h?.entries?.joinToString("") { (key, value) ->
+            "&h_${java.net.URLEncoder.encode(key, "UTF-8")}=${java.net.URLEncoder.encode(value, "UTF-8")}"
+        } ?: ""
+
+        val encodedUrl = java.net.URLEncoder.encode(rawUrl, "UTF-8")
+        val finalUrl = "$proxyBase/proxy/subtitle?url=$encodedUrl$headerParams"
+        
+        val id = lang.lowercase().replace(" ", "_") + "_" + rawUrl.hashCode().toString(16)
+
+        StremioSubtitle(
+            id = id,
+            lang = lang,
+            url = finalUrl
+        )
+    } catch (e: Exception) {
+        null
     }
 }
 
@@ -905,22 +998,46 @@ private class DirectMainApiWrapper(
 
     override suspend fun loadLinks(dataUrl: String): List<StremioStream> = withContext(Dispatchers.IO) {
         val streams = mutableListOf<StremioStream>()
+        val subtitles = mutableListOf<StremioSubtitle>()
         ServerState.info("loadLinks called: plugin=${plugin.name} dataUrl=$dataUrl")
         var callbackCount = 0
+        val seenSubtitleUrls = mutableSetOf<String>()
+        val seenStreamUrls = mutableSetOf<String>()
         try {
             kotlinx.coroutines.withTimeoutOrNull(20_000) {
-                api.loadLinks(dataUrl, false, { }, { link ->
+                api.loadLinks(dataUrl, false, { sub ->
+                    val stremioSub = (sub as Any).reflectToSubtitle(plugin.name, api)
+                    if (stremioSub != null && seenSubtitleUrls.add(stremioSub.url)) {
+                        ServerState.info("subtitle plugin=${plugin.name} lang=${stremioSub.lang} url=${stremioSub.url}")
+                        subtitles.add(stremioSub)
+                    }
+                }, { link ->
                     callbackCount++
-                    ServerState.info("loadLinks callback #$callbackCount: class=${link?.javaClass?.name} plugin=${plugin.name}")
-                    streams.addAll((link as Any).reflectToStreams(plugin.name, api))
+                    val newStreams = (link as Any).reflectToStreams(plugin.name, api)
+                    newStreams.forEach { st ->
+                        val u = st.url ?: st.hashCode().toString()
+                        if (seenStreamUrls.add(u)) {
+                            ServerState.info("stream plugin=${plugin.name} name=${st.name} url=${st.url}")
+                            streams.add(st)
+                        }
+                    }
                 })
             }
         } catch (e: Throwable) {
             val cause = e.cause?.message ?: e.message
             ServerState.warn("LoadLinks error (${plugin.name}): $cause | dataUrl=$dataUrl")
         }
-        ServerState.info("loadLinks result: plugin=${plugin.name} callbackCount=$callbackCount streams=${streams.size}")
-        streams
+        
+        val uniqueSubtitles = subtitles.distinctBy { it.url }
+        val uniqueStreams = streams.distinctBy { it.url ?: it.hashCode().toString() }
+        val finalStreams = if (uniqueSubtitles.isNotEmpty()) {
+            uniqueStreams.map { it.copy(subtitles = uniqueSubtitles.toList()) }
+        } else {
+            uniqueStreams
+        }
+        
+        ServerState.info("loadLinks result: plugin=${plugin.name} callbackCount=$callbackCount streams=${finalStreams.size} subtitles=${subtitles.size}")
+        finalStreams
     }
 }
 

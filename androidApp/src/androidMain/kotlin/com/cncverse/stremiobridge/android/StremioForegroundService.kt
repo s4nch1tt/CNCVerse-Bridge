@@ -59,7 +59,7 @@ class StremioForegroundService : Service() {
             startForeground(NOTIF_ID, buildNotification("Running on $ipAddress:${ServerState.serverPort} · $loadedCount plugins active"))
             return START_STICKY
         }
-        startForeground(NOTIF_ID, buildNotification("Starting CNCVerse Stremio Bridge…"))
+        startForeground(NOTIF_ID, buildNotification("Starting CNCVerse Bridge…"))
         ServerState.updateStatus(ServerStatus.Starting("Initialising…"))
 
         serviceScope.launch {
@@ -163,7 +163,7 @@ class StremioForegroundService : Service() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         }
         return NotificationCompat.Builder(this, NOTIF_CHANNEL_ID)
-            .setContentTitle("CNCVerse Stremio Bridge")
+            .setContentTitle("CNCVerse Bridge")
             .setContentText(contentText)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentIntent(launchIntent)

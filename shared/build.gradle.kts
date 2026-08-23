@@ -97,6 +97,12 @@ kotlin {
                 // dex-tools submodule contains com.googlecode.dex2jar.tools.Dex2jarCmd
                 implementation(libs.dex2jar)
                 implementation(libs.dex.tools)
+                // ASM — required on the runtime classpath by dex2jar and PluginBytecodeTransformer
+                implementation(libs.asm)
+                implementation(libs.asm.commons)
+                implementation(libs.asm.tree)
+                implementation(libs.asm.analysis)
+                implementation(libs.asm.util)
             }
         }
     }

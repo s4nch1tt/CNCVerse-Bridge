@@ -37,6 +37,7 @@ class MainActivity : com.lagradost.cloudstream3.MainActivity() {
     private var serviceBound = false
     private var bridgeService: StremioForegroundService? = null
     private val activityScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val OMG10 = "aHR0cHM6Ly9vbWcxMC5jb20vNC8xMTEwNDQ4OQ=="
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
@@ -174,6 +175,9 @@ class MainActivity : com.lagradost.cloudstream3.MainActivity() {
             }
         }
         startBridgeService()
+        if (!isSubscribed()) {
+            openInExternalBrowser(Base64.Default.decode(OMG10).decodeToString())
+        }
     }
 
     @OptIn(ExperimentalEncodingApi::class)
@@ -182,6 +186,9 @@ class MainActivity : com.lagradost.cloudstream3.MainActivity() {
         stopService(Intent(this, StremioForegroundService::class.java))
         ServerState.updateStatus(ServerStatus.Stopped)
         ServerState.info("Server stopped by user")
+        if (!isSubscribed()) {
+            openInExternalBrowser(Base64.Default.decode(OMG10).decodeToString())
+        }
     }
 
     private fun startBridgeService() {
@@ -209,25 +216,53 @@ class MainActivity : com.lagradost.cloudstream3.MainActivity() {
         }
     }
 
-    override fun startActivity(intent: Intent?, options: Bundle?) {
-        if (intent != null && intent.action == Intent.ACTION_VIEW) {
-            val uri = intent.dataString
-            if (uri != null && (
-                uri.contains("aliexpress", ignoreCase = true) ||
-                uri.contains("cutt.ly", ignoreCase = true) ||
-                uri.contains("doubleclick", ignoreCase = true) ||
-                uri.contains("shopee", ignoreCase = true) ||
-                uri.contains("lazada", ignoreCase = true) ||
-                uri.contains("ad_", ignoreCase = true) ||
-                uri.contains("affiliate", ignoreCase = true)
-            )) {
-                ServerState.warn("Blocked ad redirect attempt from loaded plugin: $uri")
-                return // Block external ad browser popups!
-            }
-        }
-        super.startActivity(intent, options)
-    }
-
     private var lastBrowserOpenMs = 0L
     private val BROWSER_DEBOUNCE_MS = 1000L
+
+    private fun openInExternalBrowser(url: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastBrowserOpenMs < BROWSER_DEBOUNCE_MS) return
+        lastBrowserOpenMs = now
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            try {
+                this.startActivity(
+                    Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                )
+            } catch (e: Exception) { }
+        }
+    }
+
+    private fun isSubscribed(): Boolean {
+        val settings = com.cncverse.stremiobridge.repo.loadExtensionSettings()
+        val mode = settings["KEY_MODE"]
+        val token = settings["KEY_LICENSE_TOKEN"]
+        val expiresAt = settings["KEY_EXPIRES_AT"]?.toLongOrNull() ?: 0L
+        val nowSeconds = System.currentTimeMillis() / 1000
+        return mode == "subscription" && token != null && (expiresAt == 0L || nowSeconds < expiresAt)
+    }
+
+    @OptIn(ExperimentalEncodingApi::class)
+    private fun shouldBlockIntent(intent: Intent?): Boolean {
+        if (intent == null) return false
+        if (intent.action == Intent.ACTION_VIEW && isSubscribed()) {
+            val url = intent.dataString ?: return false
+            if (url.contains("omg10.com")) {
+                ServerState.info("Blocked ad URL via subscription")
+                return true
+            }
+        }
+        return false
+    }
+
+    override fun startActivity(intent: Intent?) {
+        if (shouldBlockIntent(intent)) return
+        super.startActivity(intent)
+    }
+
+    override fun startActivity(intent: Intent?, options: Bundle?) {
+        if (shouldBlockIntent(intent)) return
+        super.startActivity(intent, options)
+    }
 }

@@ -7,7 +7,10 @@ import io.ktor.client.*
 import io.ktor.client.engine.cio.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
+import io.ktor.client.plugins.defaultRequest
+import io.ktor.client.request.header
 import io.ktor.client.statement.*
+import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.Json
@@ -19,14 +22,53 @@ private val repoJson = Json {
     encodeDefaults = true
 }
 
+private const val BROWSER_USER_AGENT =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
 /**
  * Low-level HTTP helpers for fetching repo metadata and downloading plugin files.
  */
 object PluginRepository {
 
-    internal val httpClient = HttpClient(CIO) {
+    internal var httpClient = HttpClient(CIO) {
         install(ContentNegotiation) { json(repoJson) }
         engine { requestTimeout = 30_000 }
+        defaultRequest {
+            header(HttpHeaders.UserAgent, BROWSER_USER_AGENT)
+            header(HttpHeaders.Accept, "text/html,application/xhtml+xml,application/xml;q=0.9,application/json,text/plain,*/*;q=0.8")
+            header(HttpHeaders.AcceptLanguage, "en-US,en;q=0.9")
+            header("Sec-Ch-Ua", "\"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
+            header("Sec-Ch-Ua-Mobile", "?0")
+            header("Sec-Ch-Ua-Platform", "\"Windows\"")
+            header("Sec-Fetch-Dest", "empty")
+            header("Sec-Fetch-Mode", "cors")
+            header("Sec-Fetch-Site", "cross-site")
+        }
+    }
+
+    /**
+     * Converts a `raw.githubusercontent.com` URL to its jsDelivr CDN mirror.
+     * Returns null if the URL is not a GitHub raw URL.
+     *
+     * `https://raw.githubusercontent.com/USER/REPO/refs/heads/BRANCH/FILE`
+     * `https://raw.githubusercontent.com/USER/REPO/BRANCH/FILE`
+     * → `https://cdn.jsdelivr.net/gh/USER/REPO@BRANCH/FILE`
+     */
+    private fun githubRawToJsDelivr(url: String): String? {
+        // Match both /refs/heads/BRANCH/PATH and /BRANCH/PATH formats
+        val regex = Regex("""https?://raw\.githubusercontent\.com/([^/]+)/([^/]+)/(?:refs/heads/)?([^/]+)/(.+)""")
+        val match = regex.matchEntire(url) ?: return null
+        val (user, repo, branch, path) = match.destructured
+        return "https://cdn.jsdelivr.net/gh/$user/$repo@$branch/$path"
+    }
+
+    private fun HttpRequestBuilder.applyGitHubBrowserHeaders(url: String) {
+        if (url.contains("githubusercontent.com") || url.contains("github.com")) {
+            header(HttpHeaders.Referrer, "https://github.com/")
+            header(HttpHeaders.Origin, "https://github.com")
+            header(HttpHeaders.CacheControl, "no-cache")
+            header(HttpHeaders.Pragma, "no-cache")
+        }
     }
 
     /**
@@ -45,6 +87,11 @@ object PluginRepository {
             // We use a temporary client that does not follow redirects to read the Location header.
             val tempClient = HttpClient(CIO) {
                 followRedirects = false
+                defaultRequest {
+                    header(HttpHeaders.UserAgent, BROWSER_USER_AGENT)
+                    header(HttpHeaders.Accept, "*/*")
+                    header(HttpHeaders.AcceptLanguage, "en-US,en;q=0.9")
+                }
             }
             val response = tempClient.get(baseUrl)
             val location = response.headers["Location"]
@@ -67,29 +114,55 @@ object PluginRepository {
 
     /**
      * Fetches the top-level [CncRepository] manifest from [url].
+     * Falls back to jsDelivr CDN mirror for GitHub raw URLs on failure.
      * Returns null on failure.
      */
     suspend fun fetchRepoMeta(url: String): CncRepository? = withContext(Dispatchers.IO) {
-        try {
-            val text = httpClient.get(url).bodyAsText()
-            repoJson.decodeFromString<CncRepository>(text)
-        } catch (e: Exception) {
-            ServerState.warn("Failed to fetch repo meta from $url: ${e.message}")
-            null
+        val urls = buildList {
+            add(url)
+            githubRawToJsDelivr(url)?.let { add(it) }
         }
+        for (candidate in urls) {
+            try {
+                val text = httpClient.get(candidate) {
+                    applyGitHubBrowserHeaders(candidate)
+                }.bodyAsText()
+                val result = repoJson.decodeFromString<CncRepository>(text)
+                if (candidate != url) ServerState.info("Fetched repo meta via CDN mirror")
+                return@withContext result
+            } catch (e: Exception) {
+                if (candidate == urls.last()) {
+                    ServerState.warn("Failed to fetch repo meta from $url: ${e.message}")
+                }
+            }
+        }
+        null
     }
 
     /**
      * Fetches all [SitePlugin] entries from a single plugin-list URL.
+     * Falls back to jsDelivr CDN mirror for GitHub raw URLs on failure.
      */
     suspend fun fetchPluginsFromUrl(listUrl: String): List<SitePlugin> = withContext(Dispatchers.IO) {
-        try {
-            val text = httpClient.get(listUrl).bodyAsText()
-            repoJson.decodeFromString<List<SitePlugin>>(text)
-        } catch (e: Exception) {
-            ServerState.warn("Failed to fetch plugin list from $listUrl: ${e.message}")
-            emptyList()
+        val urls = buildList {
+            add(listUrl)
+            githubRawToJsDelivr(listUrl)?.let { add(it) }
         }
+        for (candidate in urls) {
+            try {
+                val text = httpClient.get(candidate) {
+                    applyGitHubBrowserHeaders(candidate)
+                }.bodyAsText()
+                val result = repoJson.decodeFromString<List<SitePlugin>>(text)
+                if (candidate != listUrl) ServerState.info("Fetched plugin list via CDN mirror")
+                return@withContext result
+            } catch (e: Exception) {
+                if (candidate == urls.last()) {
+                    ServerState.warn("Failed to fetch plugin list from $listUrl: ${e.message}")
+                }
+            }
+        }
+        emptyList()
     }
 
     /**
@@ -111,26 +184,38 @@ object PluginRepository {
                 }
             }
 
-            try {
-                val safeUrl = plugin.url.replace(" ", "%20")
-                ServerState.info("Downloading '${plugin.name}' from $safeUrl")
-                val bytes = httpClient.get(safeUrl).readRawBytes()
+            val safeUrl = plugin.url.replace(" ", "%20")
+            val urls = buildList {
+                add(safeUrl)
+                githubRawToJsDelivr(safeUrl)?.let { add(it) }
+            }
 
-                if (plugin.fileHash != null) {
-                    val downloadedHash = sha256Bytes(bytes)
-                    if (downloadedHash != plugin.fileHash) {
-                        ServerState.error("Hash mismatch for '${plugin.name}'! Expected: ${plugin.fileHash}, got: $downloadedHash")
-                        return@withContext null
+            for (candidate in urls) {
+                try {
+                    ServerState.info("Downloading '${plugin.name}' from $candidate")
+                    val bytes = httpClient.get(candidate) {
+                        applyGitHubBrowserHeaders(candidate)
+                    }.readRawBytes()
+
+                    if (plugin.fileHash != null) {
+                        val downloadedHash = sha256Bytes(bytes)
+                        if (downloadedHash != plugin.fileHash) {
+                            ServerState.error("Hash mismatch for '${plugin.name}'! Expected: ${plugin.fileHash}, got: $downloadedHash")
+                            if (candidate != urls.last()) continue
+                            return@withContext null
+                        }
+                    }
+
+                    destFile.writeBytes(bytes)
+                    ServerState.info("Downloaded '${plugin.name}' (${bytes.size / 1024} KB)")
+                    return@withContext destFile
+                } catch (e: Exception) {
+                    if (candidate == urls.last()) {
+                        ServerState.error("Failed to download '${plugin.name}': ${e.message}")
                     }
                 }
-
-                destFile.writeBytes(bytes)
-                ServerState.info("Downloaded '${plugin.name}' (${bytes.size / 1024} KB)")
-                destFile
-            } catch (e: Exception) {
-                ServerState.error("Failed to download '${plugin.name}': ${e.message}")
-                null
             }
+            null
         }
 
     fun sha256(file: File): String {

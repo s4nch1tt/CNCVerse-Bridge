@@ -1,3 +1,9 @@
+import java.util.Properties
+
+val versionProps = Properties().apply {
+    file("${rootDir}/version.properties").inputStream().use { load(it) }
+}
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.multiplatform)
@@ -50,8 +56,8 @@ android {
         applicationId = "com.cncverse.stremiobridge"
         minSdk = 21
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.0.19"
+        versionCode = versionProps.getProperty("android.versionCode", "1").toInt()
+        versionName = versionProps.getProperty("android.versionName", "0.0.22")
     }
 
     signingConfigs {
