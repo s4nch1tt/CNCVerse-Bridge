@@ -76,7 +76,12 @@ object PluginRepository {
      * If the input is already a URL or invalid, it returns the input unchanged.
      */
     suspend fun resolveShortCode(url: String): String = withContext(Dispatchers.IO) {
-        val trimmed = url.trim()
+        var trimmed = url.trim()
+        if (trimmed.startsWith("cloudstreamrepo://")) {
+            trimmed = "https://" + trimmed.removePrefix("cloudstreamrepo://")
+        } else if (trimmed.startsWith("cloudstream://")) {
+            trimmed = "https://" + trimmed.removePrefix("cloudstream://")
+        }
         if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return@withContext trimmed
         if (!trimmed.matches("^[a-zA-Z0-9!_-]+$".toRegex())) return@withContext trimmed
 

@@ -17,8 +17,20 @@ object RepoManager {
      */
     fun loadSavedRepos() {
         var urls = loadRepoUrls().toMutableList()
+        val defaultRepos = listOf(
+            DEFAULT_REPO_URL,
+            "https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/CS.json",
+            "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/refs/heads/builds/repo.json"
+        )
         if (urls.isEmpty()) {
-            urls = mutableListOf(DEFAULT_REPO_URL)
+            urls = defaultRepos.toMutableList()
+            saveRepoUrls(urls)
+        } else {
+            defaultRepos.forEach { def ->
+                if (!urls.contains(def)) {
+                    urls.add(def)
+                }
+            }
             saveRepoUrls(urls)
         }
         val entries = urls.map { url -> RepoEntry(url = url) }
