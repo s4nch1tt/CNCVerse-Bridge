@@ -1,8 +1,13 @@
 package com.cncverse.stremiobridge.server
 
 import com.cncverse.stremiobridge.model.*
+import com.cncverse.stremiobridge.plugin.GlobalPluginManager
+import com.cncverse.stremiobridge.repo.PluginInstaller
+import com.cncverse.stremiobridge.repo.RepoManager
 import com.cncverse.stremiobridge.repo.loadExtensionSettings
 import com.cncverse.stremiobridge.repo.saveExtensionSettings
+import com.cncverse.stremiobridge.state.PluginInstallState
+import com.cncverse.stremiobridge.state.RepoState
 import com.cncverse.stremiobridge.state.ServerState
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
@@ -78,6 +83,7 @@ object StremioServer {
 
     val disabledPlugins: MutableSet<String> = mutableSetOf()
     private var disabledPluginsFile: File? = null
+    var currentCacheDir: String? = null
 
     private fun loadDisabledPlugins() {
         val file = disabledPluginsFile ?: return
@@ -153,6 +159,7 @@ object StremioServer {
 
     suspend fun start(port: Int = 8080, cacheDir: String? = null): Int {
         if (engine != null) return activePort
+        currentCacheDir = cacheDir
         if (cacheDir != null) {
             disabledPluginsFile = File(cacheDir, "disabled_plugins.json")
             loadDisabledPlugins()
@@ -215,6 +222,43 @@ object StremioServer {
                 call.respondRedirect("/")
             }
 
+            get("/api/install-plugin") {
+                val internalName = call.request.queryParameters["internalName"] ?: return@get call.respond(HttpStatusCode.BadRequest)
+                val cDir = currentCacheDir ?: File(System.getProperty("user.home"), ".cncverse_bridge").absolutePath
+                val ap = RepoState.availablePlugins.value.find { it.plugin.internalName == internalName }
+                if (ap != null) {
+                    val success = PluginInstaller.installPlugin(ap, cDir)
+                    if (success) {
+                        val installed = PluginInstaller.loadInstalledPlugins(cDir)
+                        RepoState.setInstalledPlugins(installed)
+                        installed.forEach { RepoState.setInstallState(it.internalName, PluginInstallState.Installed) }
+                        val cs3Files = PluginInstaller.getInstalledFiles(cDir)
+                        GlobalPluginManager.reloadAllPlugins(installed, cs3Files)
+                        ServerState.info("Successfully installed and loaded '${ap.plugin.name}'")
+                    }
+                }
+                call.respondRedirect("/#extensions")
+            }
+
+            get("/api/uninstall-plugin") {
+                val internalName = call.request.queryParameters["internalName"] ?: return@get call.respond(HttpStatusCode.BadRequest)
+                val cDir = currentCacheDir ?: File(System.getProperty("user.home"), ".cncverse_bridge").absolutePath
+                PluginInstaller.uninstallPlugin(internalName, cDir)
+                val installed = PluginInstaller.loadInstalledPlugins(cDir)
+                RepoState.setInstalledPlugins(installed)
+                val cs3Files = PluginInstaller.getInstalledFiles(cDir)
+                GlobalPluginManager.reloadAllPlugins(installed, cs3Files)
+                ServerState.info("Uninstalled '$internalName'")
+                call.respondRedirect("/#extensions")
+            }
+
+            get("/api/refresh-repos") {
+                withContext(Dispatchers.IO) {
+                    RepoManager.refreshAllRepos()
+                }
+                call.respondRedirect("/#extensions")
+            }
+
             get("/api/settings") {
                 val settings = loadExtensionSettings()
                 call.respond(settings)
@@ -233,7 +277,7 @@ object StremioServer {
                 }
                 saveExtensionSettings(current)
                 ServerState.info("Extension settings updated via Web Dashboard")
-                call.respondRedirect("/?saved=1")
+                call.respondRedirect("/?saved=1#settings")
             }
 
             // 📺 Manifest 📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺─────────────────────────────────────────────────────
@@ -553,34 +597,118 @@ object StremioServer {
         val cineStreamEnabled = settings["ProviderCineStream"] != "false"
         val simklEnabled = settings["ProviderSimkl"] != "false"
 
-        val pluginCards = loadedApis.joinToString("") { api ->
-            val isEnabled = !disabledPlugins.contains(api.internalName)
-            val statusBadge = if (isEnabled) 
-                """<span class="badge badge-success"><span class="dot dot-green"></span> Enabled</span>""" 
-            else 
-                """<span class="badge badge-danger"><span class="dot dot-red"></span> Disabled</span>"""
-            
-            val toggleBtn = if (isEnabled)
-                """<a class="btn-sm btn-outline-danger" href="/api/toggle-plugin?id=${api.internalName}">Disable</a>"""
-            else
-                """<a class="btn-sm btn-outline-success" href="/api/toggle-plugin?id=${api.internalName}">Enable</a>"""
+        val available = RepoState.availablePlugins.value
+        val installed = RepoState.installedPlugins.value
 
-            val typeBadges = api.supportedTypes.joinToString(" ") { type ->
-                """<span class="badge badge-subtle">$type</span>"""
+        val extCards = if (available.isNotEmpty()) {
+            available.sortedBy { it.plugin.name }.joinToString("\n") { ap ->
+                val p = ap.plugin
+                val isInst = installed.any { it.internalName == p.internalName }
+                val isLoaded = loadedApis.any { it.internalName == p.internalName || it.name == p.name }
+                val isEnabled = isLoaded && !disabledPlugins.contains(p.internalName)
+
+                val tvBadges = (p.tvTypes ?: emptyList()).take(3).joinToString(" ") { type ->
+                    """<span class="tag tag-type">${type.uppercase()}</span>"""
+                }
+                val langBadge = if (!p.language.isNullOrBlank() && p.language != "all")
+                    """<span class="tag tag-lang">${p.language.uppercase()}</span>"""
+                else ""
+
+                val statusBadge = if (p.status == 3)
+                    """<span class="tag tag-beta">● Beta</span>"""
+                else if (p.status == 1)
+                    """<span class="tag tag-ok">● OK</span>"""
+                else ""
+
+                val actionHtml = if (isInst) {
+                    val toggleBtn = if (isEnabled)
+                        """<a class="btn-sm btn-outline-warning" href="/api/toggle-plugin?id=${p.internalName}">Disable</a>"""
+                    else
+                        """<a class="btn-sm btn-outline-success" href="/api/toggle-plugin?id=${p.internalName}">Enable</a>"""
+
+                    """
+                    <div class="ext-actions-group">
+                      <span class="badge badge-success">✓ Installed</span>
+                      $toggleBtn
+                      <a class="btn-sm btn-outline-danger" href="/api/uninstall-plugin?internalName=${p.internalName}" onclick="return confirm('Uninstall ${p.name}?')">Uninstall</a>
+                    </div>
+                    """
+                } else {
+                    """<a class="btn-sm btn-install" href="/api/install-plugin?internalName=${p.internalName}">⬇ Install</a>"""
+                }
+
+                val iconHtml = if (!p.iconUrl.isNullOrBlank()) {
+                    """<img src="${p.iconUrl}" class="ext-icon" alt="${p.name}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" /><div class="ext-avatar" style="display:none;">${p.name.take(1).uppercase()}</div>"""
+                } else {
+                    """<div class="ext-avatar">${p.name.take(1).uppercase()}</div>"""
+                }
+
+                val descHtml = if (!p.description.isNullOrBlank()) {
+                    """<div class="ext-desc">${p.description.take(140)}</div>"""
+                } else ""
+
+                val author = p.authors.firstOrNull() ?: "NivinCNC"
+
+                """
+                <div class="ext-card ${if (isInst) "is-installed" else ""}" data-name="${p.name.lowercase()}" data-desc="${(p.description ?: "").lowercase()}" data-installed="${if (isInst) "1" else "0"}">
+                  <div class="ext-icon-wrapper">
+                    $iconHtml
+                  </div>
+                  <div class="ext-content">
+                    <div class="ext-title-row">
+                      <span class="ext-name">${p.name}</span>
+                      <span class="ext-version">v${p.version}</span>
+                    </div>
+                    $descHtml
+                    <div class="ext-tags">
+                      $tvBadges
+                      $langBadge
+                      $statusBadge
+                    </div>
+                    <div class="ext-author">$author</div>
+                  </div>
+                  <div class="ext-actions">
+                    $actionHtml
+                  </div>
+                </div>
+                """
             }
+        } else {
+            loadedApis.joinToString("\n") { api ->
+                val isEnabled = !disabledPlugins.contains(api.internalName)
+                val statusBadge = if (isEnabled)
+                    """<span class="badge badge-success">● Enabled</span>"""
+                else
+                    """<span class="badge badge-danger">● Disabled</span>"""
 
-            """
-            <div class="plugin-card">
-              <div class="plugin-info">
-                <div class="plugin-title">${api.name}</div>
-                <div class="plugin-meta"><code>${api.internalName}</code> &bull; $typeBadges</div>
-              </div>
-              <div class="plugin-actions">
-                $statusBadge
-                $toggleBtn
-              </div>
-            </div>
-            """
+                val toggleBtn = if (isEnabled)
+                    """<a class="btn-sm btn-outline-danger" href="/api/toggle-plugin?id=${api.internalName}">Disable</a>"""
+                else
+                    """<a class="btn-sm btn-outline-success" href="/api/toggle-plugin?id=${api.internalName}">Enable</a>"""
+
+                val typeBadges = api.supportedTypes.joinToString(" ") { type ->
+                    """<span class="tag tag-type">${type.uppercase()}</span>"""
+                }
+
+                """
+                <div class="ext-card is-installed" data-name="${api.name.lowercase()}" data-desc="" data-installed="1">
+                  <div class="ext-icon-wrapper">
+                    <div class="ext-avatar">${api.name.take(1).uppercase()}</div>
+                  </div>
+                  <div class="ext-content">
+                    <div class="ext-title-row">
+                      <span class="ext-name">${api.name}</span>
+                    </div>
+                    <div class="ext-tags">$typeBadges</div>
+                    <div class="ext-author"><code>${api.internalName}</code></div>
+                  </div>
+                  <div class="ext-actions">
+                    $statusBadge
+                    $toggleBtn
+                  </div>
+                </div>
+                """
+            }
         }
 
         return """<!DOCTYPE html>
@@ -588,91 +716,120 @@ object StremioServer {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CNCVerse Bridge Dashboard</title>
+  <title>CNCVerse Extensions & Dashboard</title>
   <style>
     :root {
-      --bg: #09090e;
-      --card-bg: #12121a;
+      --bg: #000000;
+      --card-bg: #0d0d14;
+      --card-bg-2: #141420;
       --card-border: #1e1e2d;
       --accent: #8b5cf6;
       --accent-hover: #7c3aed;
-      --text-main: #f3f4f6;
-      --text-muted: #9ca3af;
+      --accent-glow: rgba(139, 92, 246, 0.15);
+      --text-main: #ffffff;
+      --text-muted: #8e8ea0;
+      --text-sub: #b0b0c2;
       --success: #10b981;
+      --warning: #f59e0b;
       --danger: #ef4444;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-    body { background-color: var(--bg); color: var(--text-main); min-height: 100vh; padding: 2rem 1rem; }
-    .container { max-width: 900px; margin: 0 auto; }
-    header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2rem; border-bottom: 1px solid var(--card-border); padding-bottom: 1.5rem; }
-    .logo-group { display: flex; align-items: center; gap: 1rem; }
-    .logo-group h1 { font-size: 1.5rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem; }
-    .logo-group h1 span { color: var(--accent); }
-    .status-pill { background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399; font-size: 0.8rem; font-weight: 600; padding: 0.35rem 0.8rem; border-radius: 9999px; display: flex; align-items: center; gap: 0.5rem; }
-    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-    .dot-green { background-color: #10b981; box-shadow: 0 0 8px #10b981; }
-    .dot-red { background-color: #ef4444; }
+    body { background-color: var(--bg); color: var(--text-main); min-height: 100vh; padding: 1.5rem 1rem; }
+    .container { max-width: 820px; margin: 0 auto; }
+    header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
+    .header-left h1 { font-size: 1.65rem; font-weight: 800; color: #fff; letter-spacing: -0.5px; }
+    .header-left .sub { font-size: 0.85rem; color: var(--text-muted); margin-top: 2px; }
     
-    .install-banner { background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(79, 70, 229, 0.15)); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 1rem; padding: 1.5rem; margin-bottom: 2rem; display: flex; flex-direction: column; gap: 1rem; }
-    .install-banner h2 { font-size: 1.15rem; font-weight: 600; }
-    .install-banner p { font-size: 0.9rem; color: var(--text-muted); }
-    .install-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
-    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; font-size: 0.9rem; font-weight: 600; padding: 0.65rem 1.25rem; border-radius: 0.5rem; text-decoration: none; cursor: pointer; transition: all 0.2s; border: none; }
+    .install-banner { background: linear-gradient(135deg, rgba(139, 92, 246, 0.12), rgba(67, 56, 202, 0.12)); border: 1px solid rgba(139, 92, 246, 0.25); border-radius: 1rem; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; }
+    .install-banner h2 { font-size: 1.05rem; font-weight: 700; margin-bottom: 0.25rem; }
+    .install-banner p { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem; }
+    .install-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; font-size: 0.85rem; font-weight: 600; padding: 0.55rem 1.1rem; border-radius: 0.5rem; text-decoration: none; cursor: pointer; transition: all 0.2s; border: none; }
     .btn-primary { background-color: var(--accent); color: #fff; }
     .btn-primary:hover { background-color: var(--accent-hover); }
-    .btn-secondary { background-color: #1f1f2e; color: #fff; border: 1px solid var(--card-border); }
-    .btn-secondary:hover { background-color: #2a2a3e; }
-    
-    .tabs { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.5rem; }
-    .tab-btn { background: none; border: none; color: var(--text-muted); font-size: 0.95rem; font-weight: 600; padding: 0.5rem 1rem; border-radius: 0.5rem; cursor: pointer; }
-    .tab-btn.active { color: var(--accent); background: rgba(139, 92, 246, 0.1); }
+    .btn-secondary { background-color: #171724; color: #fff; border: 1px solid var(--card-border); }
+    .btn-secondary:hover { background-color: #202032; }
+
+    .nav-tabs { display: flex; gap: 0.5rem; margin-bottom: 1.25rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.65rem; }
+    .tab-btn { background: none; border: none; color: var(--text-muted); font-size: 0.92rem; font-weight: 600; padding: 0.5rem 1rem; border-radius: 0.5rem; cursor: pointer; transition: all 0.15s; }
+    .tab-btn.active { color: #fff; background: var(--accent); }
     .tab-content { display: none; }
     .tab-content.active { display: block; }
-    
-    .card { background-color: var(--card-bg); border: 1px solid var(--card-border); border-radius: 0.75rem; padding: 1.5rem; margin-bottom: 1rem; }
-    .plugin-list { display: flex; flex-direction: column; gap: 0.75rem; }
-    .plugin-card { background: #181824; border: 1px solid var(--card-border); border-radius: 0.5rem; padding: 1rem 1.25rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; }
-    .plugin-title { font-weight: 600; font-size: 1rem; margin-bottom: 0.25rem; }
-    .plugin-meta { font-size: 0.8rem; color: var(--text-muted); display: flex; align-items: center; gap: 0.5rem; }
-    .plugin-meta code { background: #11111a; padding: 0.15rem 0.4rem; border-radius: 0.25rem; }
-    .plugin-actions { display: flex; align-items: center; gap: 0.75rem; }
-    
-    .badge { font-size: 0.75rem; font-weight: 600; padding: 0.25rem 0.6rem; border-radius: 9999px; display: inline-flex; align-items: center; gap: 0.35rem; }
+
+    /* Extensions Screen UI Matching Mobile App */
+    .search-bar { position: relative; margin-bottom: 1rem; }
+    .search-bar input { width: 100%; background: #0c0c14; border: 1.5px solid var(--card-border); border-radius: 0.85rem; padding: 0.75rem 1rem 0.75rem 2.6rem; color: #fff; font-size: 0.95rem; outline: none; transition: border-color 0.2s; }
+    .search-bar input:focus { border-color: var(--accent); }
+    .search-icon { position: absolute; left: 0.9rem; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 0.95rem; }
+
+    .filter-chips { display: flex; gap: 0.5rem; margin-bottom: 1.25rem; align-items: center; flex-wrap: wrap; }
+    .chip { background: #12121e; border: 1px solid var(--card-border); color: var(--text-muted); font-size: 0.82rem; font-weight: 600; padding: 0.4rem 0.9rem; border-radius: 9999px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 0.35rem; }
+    .chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .chip-refresh { margin-left: auto; border-color: rgba(139, 92, 246, 0.4); color: #c4b5fd; }
+    .chip-refresh:hover { background: var(--accent-glow); }
+
+    .extensions-list { display: flex; flex-direction: column; gap: 0.85rem; }
+    .ext-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 0.95rem; padding: 1rem 1.2rem; display: flex; gap: 1rem; align-items: flex-start; transition: border-color 0.2s; }
+    .ext-card.is-installed { border-color: rgba(139, 92, 246, 0.35); }
+    .ext-card:hover { border-color: rgba(139, 92, 246, 0.5); }
+
+    .ext-icon-wrapper { width: 50px; height: 50px; min-width: 50px; border-radius: 0.75rem; background: var(--card-bg-2); border: 1px solid var(--card-border); overflow: hidden; display: flex; align-items: center; justify-content: center; }
+    .ext-icon { width: 100%; height: 100%; object-fit: cover; }
+    .ext-avatar { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 1.35rem; font-weight: 700; color: var(--accent); background: #16152a; }
+
+    .ext-content { flex: 1; min-width: 0; }
+    .ext-title-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem; }
+    .ext-name { font-size: 1.05rem; font-weight: 700; color: #fff; }
+    .ext-version { font-size: 0.78rem; color: var(--text-muted); font-weight: 600; }
+    .ext-desc { font-size: 0.82rem; color: var(--text-sub); line-height: 1.35; margin-bottom: 0.5rem; }
+    .ext-tags { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.35rem; }
+    .tag { font-size: 0.68rem; font-weight: 700; padding: 0.18rem 0.45rem; border-radius: 0.3rem; text-transform: uppercase; letter-spacing: 0.3px; }
+    .tag-type { background: #231d3d; color: #c4b5fd; }
+    .tag-lang { background: #1a2a44; color: #93c5fd; }
+    .tag-ok { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+    .tag-beta { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
+    .ext-author { font-size: 0.75rem; color: var(--text-muted); }
+
+    .ext-actions { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 0.5rem; margin-left: 0.5rem; }
+    .ext-actions-group { display: flex; flex-direction: column; gap: 0.4rem; align-items: flex-end; }
+    .badge { font-size: 0.72rem; font-weight: 700; padding: 0.2rem 0.55rem; border-radius: 9999px; }
     .badge-success { background: rgba(16, 185, 129, 0.15); color: #34d399; }
     .badge-danger { background: rgba(239, 68, 68, 0.15); color: #f87171; }
-    .badge-subtle { background: #262638; color: #a5b4fc; }
-    
-    .btn-sm { font-size: 0.8rem; padding: 0.35rem 0.75rem; border-radius: 0.375rem; text-decoration: none; font-weight: 600; border: 1px solid transparent; }
-    .btn-outline-danger { border-color: rgba(239, 68, 68, 0.4); color: #f87171; }
+
+    .btn-sm { font-size: 0.8rem; font-weight: 600; padding: 0.4rem 0.85rem; border-radius: 0.5rem; text-decoration: none; cursor: pointer; border: 1px solid transparent; transition: all 0.15s; white-space: nowrap; }
+    .btn-install { background: var(--accent); color: #fff; }
+    .btn-install:hover { background: var(--accent-hover); }
+    .btn-outline-danger { border-color: rgba(239, 68, 68, 0.4); color: #f87171; background: transparent; }
     .btn-outline-danger:hover { background: rgba(239, 68, 68, 0.15); }
-    .btn-outline-success { border-color: rgba(16, 185, 129, 0.4); color: #34d399; }
+    .btn-outline-success { border-color: rgba(16, 185, 129, 0.4); color: #34d399; background: transparent; }
     .btn-outline-success:hover { background: rgba(16, 185, 129, 0.15); }
-    
+    .btn-outline-warning { border-color: rgba(245, 158, 11, 0.4); color: #fbbf24; background: transparent; }
+    .btn-outline-warning:hover { background: rgba(245, 158, 11, 0.15); }
+
+    /* Settings Card */
+    .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 0.95rem; padding: 1.5rem; }
     .form-group { margin-bottom: 1.25rem; }
-    .form-group label { display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: 0.4rem; color: #e5e7eb; }
-    .form-group .desc { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem; }
-    .form-control { width: 100%; background: #181824; border: 1px solid var(--card-border); border-radius: 0.5rem; padding: 0.65rem 0.85rem; color: #fff; font-size: 0.9rem; }
-    .form-control:focus { outline: none; border-color: var(--accent); }
-    .checkbox-group { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
+    .form-group label { display: block; font-size: 0.9rem; font-weight: 700; margin-bottom: 0.25rem; color: #fff; }
+    .form-group .desc { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.45rem; }
+    .form-control { width: 100%; background: #141420; border: 1px solid var(--card-border); border-radius: 0.6rem; padding: 0.7rem 0.9rem; color: #fff; font-size: 0.9rem; outline: none; }
+    .form-control:focus { border-color: var(--accent); }
+    .checkbox-group { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.5rem; }
     .checkbox-group input { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
-    
-    .alert-success { background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399; padding: 0.85rem 1.25rem; border-radius: 0.5rem; margin-bottom: 1.5rem; font-size: 0.9rem; }
+    .alert-saved { background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399; padding: 0.75rem 1rem; border-radius: 0.6rem; margin-bottom: 1.25rem; font-size: 0.88rem; font-weight: 600; }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
-      <div class="logo-group">
-        <h1><span>🎬</span> CNCVerse Bridge</h1>
-      </div>
-      <div class="status-pill">
-        <span class="dot dot-green"></span> Active &bull; ${loadedApis.size} Plugins
+      <div class="header-left">
+        <h1>Extensions</h1>
+        <div class="sub">${installed.size} installed &bull; ${if (available.isNotEmpty()) available.size else loadedApis.size} available</div>
       </div>
     </header>
 
     <div class="install-banner">
-      <h2>🚀 Install into Stremio</h2>
-      <p>Click below to automatically install this addon into your Stremio app or web account.</p>
+      <h2>🚀 Stremio Integration</h2>
+      <p>Connect this bridge directly to your Stremio app to stream from all installed CloudStream extensions.</p>
       <div class="install-actions">
         <a class="btn btn-primary" id="btn-stremio" href="#">📲 Install on Stremio App</a>
         <a class="btn btn-secondary" id="btn-web" href="#" target="_blank">🌐 Install on Stremio Web</a>
@@ -680,20 +837,33 @@ object StremioServer {
       </div>
     </div>
 
-    <div class="tabs">
-      <button class="tab-btn active" onclick="switchTab('plugins')">🔌 Installed Plugins (${loadedApis.size})</button>
-      <button class="tab-btn" onclick="switchTab('settings')">⚙️ Extension Settings</button>
+    <div class="nav-tabs">
+      <button class="tab-btn active" onclick="switchTab('extensions', this)">🧩 Extensions Store (${if (available.isNotEmpty()) available.size else loadedApis.size})</button>
+      <button class="tab-btn" onclick="switchTab('settings', this)">⚙️ Extension Settings</button>
     </div>
 
-    <div id="tab-plugins" class="tab-content active">
-      <div class="plugin-list">
-        $pluginCards
+    <!-- Extensions Store Tab -->
+    <div id="tab-extensions" class="tab-content active">
+      <div class="search-bar">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="extSearch" placeholder="Search extensions..." oninput="filterExtensions()">
+      </div>
+
+      <div class="filter-chips">
+        <button class="chip active" onclick="setFilter('all', this)">All (${if (available.isNotEmpty()) available.size else loadedApis.size})</button>
+        <button class="chip" onclick="setFilter('installed', this)">Installed (${installed.size})</button>
+        <a class="chip chip-refresh" href="/api/refresh-repos">🔄 Refresh Repos</a>
+      </div>
+
+      <div class="extensions-list" id="extensionsContainer">
+        $extCards
       </div>
     </div>
 
+    <!-- Extension Settings Tab -->
     <div id="tab-settings" class="tab-content">
       <div class="card">
-        <h3 style="margin-bottom: 1.25rem; font-size: 1.1rem;">⚙️ Extension Configuration</h3>
+        <h3 style="margin-bottom: 1.25rem; font-size: 1.15rem; font-weight: 700;">⚙️ Extension Configuration</h3>
         <form action="/api/settings" method="POST">
           <div class="form-group">
             <label for="token">FebBox Authentication Token</label>
@@ -734,19 +904,19 @@ object StremioServer {
             <label>Sub-provider Catalogs</label>
             <div class="checkbox-group">
               <input type="checkbox" id="ProviderTmdb" name="ProviderTmdb" value="true" ${if (tmdbEnabled) "checked" else ""}>
-              <label for="ProviderTmdb" style="margin:0; font-weight: normal;">Enable TMDB Catalog</label>
+              <label for="ProviderTmdb" style="margin:0; font-weight: normal; color: var(--text-sub);">Enable TMDB Catalog</label>
             </div>
             <div class="checkbox-group">
               <input type="checkbox" id="ProviderCineStream" name="ProviderCineStream" value="true" ${if (cineStreamEnabled) "checked" else ""}>
-              <label for="ProviderCineStream" style="margin:0; font-weight: normal;">Enable CineStream Catalog</label>
+              <label for="ProviderCineStream" style="margin:0; font-weight: normal; color: var(--text-sub);">Enable CineStream Catalog</label>
             </div>
             <div class="checkbox-group">
               <input type="checkbox" id="ProviderSimkl" name="ProviderSimkl" value="true" ${if (simklEnabled) "checked" else ""}>
-              <label for="ProviderSimkl" style="margin:0; font-weight: normal;">Enable Simkl Catalog</label>
+              <label for="ProviderSimkl" style="margin:0; font-weight: normal; color: var(--text-sub);">Enable Simkl Catalog</label>
             </div>
           </div>
 
-          <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">💾 Save Extension Settings</button>
+          <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem; padding: 0.75rem;">💾 Save Extension Settings</button>
         </form>
       </div>
     </div>
@@ -766,11 +936,45 @@ object StremioServer {
       });
     }
 
-    function switchTab(tabId) {
-      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    function switchTab(tabId, el) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
       document.getElementById('tab-' + tabId).classList.add('active');
-      event.target.classList.add('active');
+      if (el) el.classList.add('active');
+      window.location.hash = tabId;
+    }
+
+    let currentFilter = 'all';
+
+    function setFilter(type, el) {
+      document.querySelectorAll('.chip:not(.chip-refresh)').forEach(c => c.classList.remove('active'));
+      el.classList.add('active');
+      currentFilter = type;
+      filterExtensions();
+    }
+
+    function filterExtensions() {
+      const q = (document.getElementById('extSearch').value || '').toLowerCase().trim();
+      const cards = document.querySelectorAll('.ext-card');
+      cards.forEach(c => {
+        const name = c.getAttribute('data-name') || '';
+        const desc = c.getAttribute('data-desc') || '';
+        const isInst = c.getAttribute('data-installed') === '1';
+
+        const matchesQuery = !q || name.includes(q) || desc.includes(q);
+        const matchesFilter = (currentFilter === 'all') || (currentFilter === 'installed' && isInst);
+
+        if (matchesQuery && matchesFilter) {
+          c.style.display = 'flex';
+        } else {
+          c.style.display = 'none';
+        }
+      });
+    }
+
+    if (window.location.hash === '#settings') {
+      const btn = document.querySelectorAll('.tab-btn')[1];
+      if (btn) switchTab('settings', btn);
     }
   </script>
 </body>
