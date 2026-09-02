@@ -2,6 +2,7 @@ package com.cncverse.stremiobridge.server
 
 import com.cncverse.stremiobridge.model.*
 import com.cncverse.stremiobridge.plugin.GlobalPluginManager
+import com.cncverse.stremiobridge.repo.DEFAULT_REPO_URL
 import com.cncverse.stremiobridge.repo.PluginInstaller
 import com.cncverse.stremiobridge.repo.RepoManager
 import com.cncverse.stremiobridge.repo.loadExtensionSettings
@@ -208,6 +209,9 @@ object StremioServer {
         routing {
             // 📺 Status Page 📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺
             get("/") {
+                call.response.headers.append(HttpHeaders.CacheControl, "no-cache, no-store, must-revalidate")
+                call.response.headers.append(HttpHeaders.Pragma, "no-cache")
+                call.response.headers.append(HttpHeaders.Expires, "0")
                 call.respondText(buildStatusHtml(), ContentType.Text.Html)
             }
 
@@ -219,7 +223,7 @@ object StremioServer {
                     disabledPlugins.add(id)
                 }
                 saveDisabledPlugins()
-                call.respondRedirect("/")
+                call.respondRedirect("/?v=${System.currentTimeMillis()}#extensions")
             }
 
             get("/api/install-plugin") {
@@ -227,36 +231,63 @@ object StremioServer {
                 val cDir = currentCacheDir ?: File(System.getProperty("user.home"), ".cncverse_bridge").absolutePath
                 val ap = RepoState.availablePlugins.value.find { it.plugin.internalName == internalName }
                 if (ap != null) {
-                    val success = PluginInstaller.installPlugin(ap, cDir)
-                    if (success) {
-                        val installed = PluginInstaller.loadInstalledPlugins(cDir)
-                        RepoState.setInstalledPlugins(installed)
-                        installed.forEach { RepoState.setInstallState(it.internalName, PluginInstallState.Installed) }
-                        val cs3Files = PluginInstaller.getInstalledFiles(cDir)
-                        GlobalPluginManager.reloadAllPlugins(installed, cs3Files)
-                        ServerState.info("Successfully installed and loaded '${ap.plugin.name}'")
+                    withContext(Dispatchers.IO) {
+                        val success = PluginInstaller.installPlugin(ap, cDir)
+                        if (success) {
+                            val installed = PluginInstaller.loadInstalledPlugins(cDir)
+                            RepoState.setInstalledPlugins(installed)
+                            installed.forEach { RepoState.setInstallState(it.internalName, PluginInstallState.Installed) }
+                            val cs3Files = PluginInstaller.getInstalledFiles(cDir)
+                            GlobalPluginManager.reloadAllPlugins(installed, cs3Files)
+                            ServerState.info("Successfully installed and loaded '${ap.plugin.name}'")
+                        }
                     }
                 }
-                call.respondRedirect("/#extensions")
+                call.respondRedirect("/?v=${System.currentTimeMillis()}#extensions")
             }
 
             get("/api/uninstall-plugin") {
                 val internalName = call.request.queryParameters["internalName"] ?: return@get call.respond(HttpStatusCode.BadRequest)
                 val cDir = currentCacheDir ?: File(System.getProperty("user.home"), ".cncverse_bridge").absolutePath
-                PluginInstaller.uninstallPlugin(internalName, cDir)
-                val installed = PluginInstaller.loadInstalledPlugins(cDir)
-                RepoState.setInstalledPlugins(installed)
-                val cs3Files = PluginInstaller.getInstalledFiles(cDir)
-                GlobalPluginManager.reloadAllPlugins(installed, cs3Files)
-                ServerState.info("Uninstalled '$internalName'")
-                call.respondRedirect("/#extensions")
+                withContext(Dispatchers.IO) {
+                    PluginInstaller.uninstallPlugin(internalName, cDir)
+                    val installed = PluginInstaller.loadInstalledPlugins(cDir)
+                    RepoState.setInstalledPlugins(installed)
+                    val cs3Files = PluginInstaller.getInstalledFiles(cDir)
+                    GlobalPluginManager.reloadAllPlugins(installed, cs3Files)
+                    ServerState.info("Uninstalled '$internalName'")
+                }
+                call.respondRedirect("/?v=${System.currentTimeMillis()}#extensions")
+            }
+
+            post("/api/add-repo") {
+                val params = call.receiveParameters()
+                val url = params["url"]?.trim()
+                if (!url.isNullOrBlank()) {
+                    withContext(Dispatchers.IO) {
+                        val entry = RepoManager.addRepo(url)
+                        if (entry != null) {
+                            ServerState.info("Added repo: $url (${entry.name})")
+                        }
+                    }
+                }
+                call.respondRedirect("/?v=${System.currentTimeMillis()}#extensions")
+            }
+
+            get("/api/remove-repo") {
+                val url = call.request.queryParameters["url"]?.trim()
+                if (!url.isNullOrBlank()) {
+                    RepoManager.removeRepo(url)
+                    ServerState.info("Removed repo: $url")
+                }
+                call.respondRedirect("/?v=${System.currentTimeMillis()}#extensions")
             }
 
             get("/api/refresh-repos") {
                 withContext(Dispatchers.IO) {
                     RepoManager.refreshAllRepos()
                 }
-                call.respondRedirect("/#extensions")
+                call.respondRedirect("/?v=${System.currentTimeMillis()}#extensions")
             }
 
             get("/api/settings") {
@@ -599,6 +630,16 @@ object StremioServer {
 
         val available = RepoState.availablePlugins.value
         val installed = RepoState.installedPlugins.value
+        val repos = RepoState.repos.value
+
+        val repoChipsHtml = repos.joinToString("") { r ->
+            val displayName = if (r.name.isNotBlank()) r.name else r.url.removePrefix("https://").removePrefix("http://").take(28)
+            val isDefault = r.url == DEFAULT_REPO_URL
+            val delBtn = if (!isDefault)
+                """<a href="/api/remove-repo?url=${r.url}" class="repo-del" title="Remove Repository" onclick="return confirm('Remove repository ${r.name}?')">✕</a>"""
+            else ""
+            """<div class="repo-pill"><span class="repo-dot"></span><span class="repo-name">$displayName</span>$delBtn</div>"""
+        }
 
         val extCards = if (available.isNotEmpty()) {
             available.sortedBy { it.plugin.name }.joinToString("\n") { ap ->
@@ -622,19 +663,19 @@ object StremioServer {
 
                 val actionHtml = if (isInst) {
                     val toggleBtn = if (isEnabled)
-                        """<a class="btn-sm btn-outline-warning" href="/api/toggle-plugin?id=${p.internalName}">Disable</a>"""
+                        """<a class="btn-sm btn-outline-warning" href="/api/toggle-plugin?id=${p.internalName}" onclick="performAction(this, 'Updating…')">Disable</a>"""
                     else
-                        """<a class="btn-sm btn-outline-success" href="/api/toggle-plugin?id=${p.internalName}">Enable</a>"""
+                        """<a class="btn-sm btn-outline-success" href="/api/toggle-plugin?id=${p.internalName}" onclick="performAction(this, 'Updating…')">Enable</a>"""
 
                     """
                     <div class="ext-actions-group">
                       <span class="badge badge-success">✓ Installed</span>
                       $toggleBtn
-                      <a class="btn-sm btn-outline-danger" href="/api/uninstall-plugin?internalName=${p.internalName}" onclick="return confirm('Uninstall ${p.name}?')">Uninstall</a>
+                      <a class="btn-sm btn-outline-danger" href="/api/uninstall-plugin?internalName=${p.internalName}" onclick="if(confirm('Uninstall ${p.name}?')){performAction(this, '⏳ Deleting…'); return true;} else return false;">Uninstall</a>
                     </div>
                     """
                 } else {
-                    """<a class="btn-sm btn-install" href="/api/install-plugin?internalName=${p.internalName}">⬇ Install</a>"""
+                    """<a class="btn-sm btn-install" href="/api/install-plugin?internalName=${p.internalName}" onclick="performAction(this, '⏳ Installing…')">⬇ Install</a>"""
                 }
 
                 val iconHtml = if (!p.iconUrl.isNullOrBlank()) {
@@ -816,6 +857,16 @@ object StremioServer {
     .checkbox-group { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.5rem; }
     .checkbox-group input { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
     .alert-saved { background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399; padding: 0.75rem 1rem; border-radius: 0.6rem; margin-bottom: 1.25rem; font-size: 0.88rem; font-weight: 600; }
+    /* Repo Bar Styles */
+    .repo-bar { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 0.95rem; padding: 1rem 1.2rem; margin-bottom: 1.25rem; }
+    .repo-bar-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+    .repo-bar-title { font-size: 0.92rem; font-weight: 700; color: #fff; }
+    .repo-chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .repo-pill { background: #141420; border: 1px solid var(--card-border); border-radius: 9999px; padding: 0.35rem 0.8rem; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 0.4rem; color: #e2e8f0; }
+    .repo-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
+    .repo-del { color: var(--danger); text-decoration: none; font-weight: 700; margin-left: 0.25rem; cursor: pointer; }
+    .repo-del:hover { color: #ff6b6b; }
+    .add-repo-form { display: flex; gap: 0.5rem; margin-top: 0.85rem; padding-top: 0.85rem; border-top: 1px solid var(--card-border); }
   </style>
 </head>
 <body>
@@ -844,6 +895,20 @@ object StremioServer {
 
     <!-- Extensions Store Tab -->
     <div id="tab-extensions" class="tab-content active">
+      <div class="repo-bar">
+        <div class="repo-bar-header">
+          <span class="repo-bar-title">📦 Repositories (${repos.size})</span>
+          <button class="btn-sm btn-secondary" onclick="toggleRepoForm()">➕ Add Repository</button>
+        </div>
+        <div class="repo-chips">
+          $repoChipsHtml
+        </div>
+        <form id="addRepoForm" action="/api/add-repo" method="POST" class="add-repo-form" style="display:none;">
+          <input type="text" name="url" placeholder="Enter repo URL or shortcode (e.g. !tamil, https://.../CNC.json)" required class="form-control" style="flex:1;">
+          <button type="submit" class="btn btn-primary" onclick="performAction(this, 'Adding…');">Add</button>
+        </form>
+      </div>
+
       <div class="search-bar">
         <span class="search-icon">🔍</span>
         <input type="text" id="extSearch" placeholder="Search extensions..." oninput="filterExtensions()">
@@ -852,7 +917,7 @@ object StremioServer {
       <div class="filter-chips">
         <button class="chip active" onclick="setFilter('all', this)">All (${if (available.isNotEmpty()) available.size else loadedApis.size})</button>
         <button class="chip" onclick="setFilter('installed', this)">Installed (${installed.size})</button>
-        <a class="chip chip-refresh" href="/api/refresh-repos">🔄 Refresh Repos</a>
+        <a class="chip chip-refresh" href="/api/refresh-repos" onclick="performAction(this, '🔄 Refreshing…')">🔄 Refresh Repos</a>
       </div>
 
       <div class="extensions-list" id="extensionsContainer">
@@ -934,6 +999,17 @@ object StremioServer {
       navigator.clipboard.writeText(manifestUrl).then(() => {
         alert('Copied Manifest URL to clipboard!\n' + manifestUrl);
       });
+    }
+
+    function performAction(el, text) {
+      el.innerText = text;
+      el.style.opacity = '0.6';
+      el.style.pointerEvents = 'none';
+    }
+
+    function toggleRepoForm() {
+      const f = document.getElementById('addRepoForm');
+      f.style.display = (f.style.display === 'none' || f.style.display === '') ? 'flex' : 'none';
     }
 
     function switchTab(tabId, el) {
