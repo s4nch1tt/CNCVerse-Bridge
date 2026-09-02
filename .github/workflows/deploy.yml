@@ -1,0 +1,77 @@
+name: Deploy CNCVerse Bridge
+
+on:
+  workflow_dispatch:
+  # schedule:
+  #   - cron: '0 */5 * * *' # Enable after testing for 24/7 continuous uptime
+
+jobs:
+  run-bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Install Cloudflared
+        run: |
+          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
+          sudo dpkg -i cloudflared.deb
+
+      - name: Configure Storage & Extension Settings
+        env:
+          EXTENSION_SETTINGS: ${{ secrets.EXTENSION_SETTINGS }}
+        run: |
+          mkdir -p ~/.cncverse
+          mkdir -p ~/.cncverse_bridge
+          if [ -n "$EXTENSION_SETTINGS" ]; then
+            echo "$EXTENSION_SETTINGS" > ~/.cncverse/ext_settings.txt
+            echo "Loaded EXTENSION_SETTINGS secret into ~/.cncverse/ext_settings.txt"
+          fi
+
+      - name: Launch Server & Cloudflare Tunnel
+        env:
+          CF_WORKER_URL: ${{ secrets.CF_WORKER_URL }}
+          CF_WORKER_SECRET: ${{ secrets.CF_WORKER_SECRET }}
+          HEADLESS: "1"
+        run: |
+          # 1. Start Headless Server in background
+          ./gradlew :desktopApp:run --args="headless" &
+          SERVER_PID=$!
+
+          echo "Waiting for Stremio HTTP server to bind port 8080..."
+          for i in {1..30}; do
+            if curl -s http://127.0.0.1:8080/manifest.json > /dev/null; then
+              echo "✅ Stremio HTTP server is UP and responding on port 8080!"
+              break
+            fi
+            sleep 2
+          done
+
+          # 2. Launch Cloudflare Tunnel
+          cloudflared tunnel --url http://127.0.0.1:8080 --no-autoupdate > tunnel.log 2>&1 &
+          sleep 8
+
+          # 3. Extract generated trycloudflare URL
+          TUNNEL_URL=$(grep -o 'https://[-a-zA-Z0-9]\+\.trycloudflare\.com' tunnel.log | head -n 1)
+          echo "========================================="
+          echo "🚀 Live Cloudflare Tunnel URL: $TUNNEL_URL"
+          echo "========================================="
+
+          # 4. Sync URL to Cloudflare Worker Gateway (if configured)
+          if [ -n "$CF_WORKER_URL" ]; then
+            curl -s -X POST "$CF_WORKER_URL/__update_backend" \
+              -H "Authorization: Bearer $CF_WORKER_SECRET" \
+              -H "Content-Type: application/json" \
+              -d "{\"backend_url\": \"$TUNNEL_URL\"}"
+            echo "✅ Synced tunnel URL with Cloudflare Worker: $CF_WORKER_URL"
+          fi
+
+          # 5. Keep runner alive for 5 hours (17500s)
+          sleep 17500

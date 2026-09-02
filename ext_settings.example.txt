@@ -1,0 +1,31 @@
+# ===================================================================
+# CNCVerse Bridge - Extension Configuration Settings
+# ===================================================================
+
+# --- Account & Auth Tokens ---
+# FebBox token for premium link resolver
+token=
+
+# ShowBox / Febbox UI Token
+showbox_ui_token=
+
+# Wyzie Subtitles API Key (optional)
+wyzie_subs_api_key=
+
+# GramCinema Bearer Token (optional)
+gramcinema_bearer_token=
+
+
+# --- Scraper & Engine Configurations ---
+# MovieBox API mirror host (default: https://api3.aoneroom.com)
+moviebox_host=https://api3.aoneroom.com
+
+# Scraper Concurrency: Max simultaneous search threads (-1 = unlimited, default = 10)
+ScrapeConcurrency=10
+provider_concurrency=10
+
+
+# --- Sub-provider Catalogs ---
+ProviderTmdb=true
+ProviderCineStream=true
+ProviderSimkl=true

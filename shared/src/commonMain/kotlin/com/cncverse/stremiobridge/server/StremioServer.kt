@@ -1,6 +1,8 @@
 package com.cncverse.stremiobridge.server
 
 import com.cncverse.stremiobridge.model.*
+import com.cncverse.stremiobridge.repo.loadExtensionSettings
+import com.cncverse.stremiobridge.repo.saveExtensionSettings
 import com.cncverse.stremiobridge.state.ServerState
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
@@ -211,6 +213,27 @@ object StremioServer {
                 }
                 saveDisabledPlugins()
                 call.respondRedirect("/")
+            }
+
+            get("/api/settings") {
+                val settings = loadExtensionSettings()
+                call.respond(settings)
+            }
+
+            post("/api/settings") {
+                val params = call.receiveParameters()
+                val current = loadExtensionSettings().toMutableMap()
+                params.entries().forEach { (k, v) ->
+                    val valStr = v.firstOrNull()?.trim()
+                    if (valStr.isNullOrEmpty()) {
+                        current.remove(k)
+                    } else {
+                        current[k] = valStr
+                    }
+                }
+                saveExtensionSettings(current)
+                ServerState.info("Extension settings updated via Web Dashboard")
+                call.respondRedirect("/?saved=1")
             }
 
             // 📺 Manifest 📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺─────────────────────────────────────────────────────
@@ -520,35 +543,238 @@ object StremioServer {
     // ── HTML status page ──────────────────────────────────────────────────────
 
     private fun buildStatusHtml(): String {
-        val pluginRows = loadedApis.joinToString("") { api ->
+        val settings = loadExtensionSettings()
+        val febboxToken = settings["token"] ?: ""
+        val showboxToken = settings["showbox_ui_token"] ?: ""
+        val wyzieKey = settings["wyzie_subs_api_key"] ?: ""
+        val movieboxHost = settings["moviebox_host"] ?: "https://api3.aoneroom.com"
+        val concurrency = settings["ScrapeConcurrency"] ?: "10"
+        val tmdbEnabled = settings["ProviderTmdb"] != "false"
+        val cineStreamEnabled = settings["ProviderCineStream"] != "false"
+        val simklEnabled = settings["ProviderSimkl"] != "false"
+
+        val pluginCards = loadedApis.joinToString("") { api ->
             val isEnabled = !disabledPlugins.contains(api.internalName)
-            val statusHtml = if (isEnabled) "<td style=\"color:#4ade80\">&#9679; Enabled</td>" else "<td style=\"color:#f87171\">&#9679; Disabled</td>"
-            val actionText = if (isEnabled) "Disable" else "Enable"
-            """<tr>
-               <td>${api.name}</td>
-               <td>${api.internalName}</td>
-               <td>${api.supportedTypes.joinToString(", ")}</td>
-               $statusHtml
-               <td><a class="btn" style="padding:0.25rem 0.75rem;margin:0;font-size:0.9rem;" href="/api/toggle-plugin?id=${api.internalName}">$actionText</a></td>
-             </tr>"""
+            val statusBadge = if (isEnabled) 
+                """<span class="badge badge-success"><span class="dot dot-green"></span> Enabled</span>""" 
+            else 
+                """<span class="badge badge-danger"><span class="dot dot-red"></span> Disabled</span>"""
+            
+            val toggleBtn = if (isEnabled)
+                """<a class="btn-sm btn-outline-danger" href="/api/toggle-plugin?id=${api.internalName}">Disable</a>"""
+            else
+                """<a class="btn-sm btn-outline-success" href="/api/toggle-plugin?id=${api.internalName}">Enable</a>"""
+
+            val typeBadges = api.supportedTypes.joinToString(" ") { type ->
+                """<span class="badge badge-subtle">$type</span>"""
+            }
+
+            """
+            <div class="plugin-card">
+              <div class="plugin-info">
+                <div class="plugin-title">${api.name}</div>
+                <div class="plugin-meta"><code>${api.internalName}</code> &bull; $typeBadges</div>
+              </div>
+              <div class="plugin-actions">
+                $statusBadge
+                $toggleBtn
+              </div>
+            </div>
+            """
         }
+
         return """<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8">
-<title>CNCVerse Bridge</title>
-<style>
-  body{background:#0f0f1a;color:#e0e0f0;font-family:sans-serif;padding:2rem}
-  h1{color:#a78bfa}
-  table{border-collapse:collapse;width:100%;margin-top:1rem}
-  th,td{padding:.5rem 1rem;border:1px solid #2a2a4a;text-align:left}
-  th{background:#1a1a2e}
-  .btn{display:inline-block;margin-top:1rem;padding:.75rem 1.5rem;background:#7c3aed;color:#fff;border-radius:.5rem;text-decoration:none;font-weight:bold}
-</style></head><body>
-<h1>&#127916; CNCVerse Bridge</h1>
-<p>Loaded plugins: <strong>${loadedApis.size}</strong></p>
-<a class="btn" href="stremio://localhost:${ServerState.serverPort}/manifest.json">&#9654; Add to Stremio</a>
-<table><thead><tr><th>Name</th><th>Internal</th><th>Types</th><th>Status</th><th>Action</th></tr></thead>
-<tbody>$pluginRows</tbody></table>
-</body></html>"""
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CNCVerse Bridge Dashboard</title>
+  <style>
+    :root {
+      --bg: #09090e;
+      --card-bg: #12121a;
+      --card-border: #1e1e2d;
+      --accent: #8b5cf6;
+      --accent-hover: #7c3aed;
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+      --success: #10b981;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    body { background-color: var(--bg); color: var(--text-main); min-height: 100vh; padding: 2rem 1rem; }
+    .container { max-width: 900px; margin: 0 auto; }
+    header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2rem; border-bottom: 1px solid var(--card-border); padding-bottom: 1.5rem; }
+    .logo-group { display: flex; align-items: center; gap: 1rem; }
+    .logo-group h1 { font-size: 1.5rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem; }
+    .logo-group h1 span { color: var(--accent); }
+    .status-pill { background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399; font-size: 0.8rem; font-weight: 600; padding: 0.35rem 0.8rem; border-radius: 9999px; display: flex; align-items: center; gap: 0.5rem; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .dot-green { background-color: #10b981; box-shadow: 0 0 8px #10b981; }
+    .dot-red { background-color: #ef4444; }
+    
+    .install-banner { background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(79, 70, 229, 0.15)); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 1rem; padding: 1.5rem; margin-bottom: 2rem; display: flex; flex-direction: column; gap: 1rem; }
+    .install-banner h2 { font-size: 1.15rem; font-weight: 600; }
+    .install-banner p { font-size: 0.9rem; color: var(--text-muted); }
+    .install-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; font-size: 0.9rem; font-weight: 600; padding: 0.65rem 1.25rem; border-radius: 0.5rem; text-decoration: none; cursor: pointer; transition: all 0.2s; border: none; }
+    .btn-primary { background-color: var(--accent); color: #fff; }
+    .btn-primary:hover { background-color: var(--accent-hover); }
+    .btn-secondary { background-color: #1f1f2e; color: #fff; border: 1px solid var(--card-border); }
+    .btn-secondary:hover { background-color: #2a2a3e; }
+    
+    .tabs { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.5rem; }
+    .tab-btn { background: none; border: none; color: var(--text-muted); font-size: 0.95rem; font-weight: 600; padding: 0.5rem 1rem; border-radius: 0.5rem; cursor: pointer; }
+    .tab-btn.active { color: var(--accent); background: rgba(139, 92, 246, 0.1); }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    
+    .card { background-color: var(--card-bg); border: 1px solid var(--card-border); border-radius: 0.75rem; padding: 1.5rem; margin-bottom: 1rem; }
+    .plugin-list { display: flex; flex-direction: column; gap: 0.75rem; }
+    .plugin-card { background: #181824; border: 1px solid var(--card-border); border-radius: 0.5rem; padding: 1rem 1.25rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; }
+    .plugin-title { font-weight: 600; font-size: 1rem; margin-bottom: 0.25rem; }
+    .plugin-meta { font-size: 0.8rem; color: var(--text-muted); display: flex; align-items: center; gap: 0.5rem; }
+    .plugin-meta code { background: #11111a; padding: 0.15rem 0.4rem; border-radius: 0.25rem; }
+    .plugin-actions { display: flex; align-items: center; gap: 0.75rem; }
+    
+    .badge { font-size: 0.75rem; font-weight: 600; padding: 0.25rem 0.6rem; border-radius: 9999px; display: inline-flex; align-items: center; gap: 0.35rem; }
+    .badge-success { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+    .badge-danger { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+    .badge-subtle { background: #262638; color: #a5b4fc; }
+    
+    .btn-sm { font-size: 0.8rem; padding: 0.35rem 0.75rem; border-radius: 0.375rem; text-decoration: none; font-weight: 600; border: 1px solid transparent; }
+    .btn-outline-danger { border-color: rgba(239, 68, 68, 0.4); color: #f87171; }
+    .btn-outline-danger:hover { background: rgba(239, 68, 68, 0.15); }
+    .btn-outline-success { border-color: rgba(16, 185, 129, 0.4); color: #34d399; }
+    .btn-outline-success:hover { background: rgba(16, 185, 129, 0.15); }
+    
+    .form-group { margin-bottom: 1.25rem; }
+    .form-group label { display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: 0.4rem; color: #e5e7eb; }
+    .form-group .desc { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem; }
+    .form-control { width: 100%; background: #181824; border: 1px solid var(--card-border); border-radius: 0.5rem; padding: 0.65rem 0.85rem; color: #fff; font-size: 0.9rem; }
+    .form-control:focus { outline: none; border-color: var(--accent); }
+    .checkbox-group { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
+    .checkbox-group input { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+    
+    .alert-success { background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399; padding: 0.85rem 1.25rem; border-radius: 0.5rem; margin-bottom: 1.5rem; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo-group">
+        <h1><span>🎬</span> CNCVerse Bridge</h1>
+      </div>
+      <div class="status-pill">
+        <span class="dot dot-green"></span> Active &bull; ${loadedApis.size} Plugins
+      </div>
+    </header>
+
+    <div class="install-banner">
+      <h2>🚀 Install into Stremio</h2>
+      <p>Click below to automatically install this addon into your Stremio app or web account.</p>
+      <div class="install-actions">
+        <a class="btn btn-primary" id="btn-stremio" href="#">📲 Install on Stremio App</a>
+        <a class="btn btn-secondary" id="btn-web" href="#" target="_blank">🌐 Install on Stremio Web</a>
+        <button class="btn btn-secondary" onclick="copyManifestUrl()">📋 Copy Manifest URL</button>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('plugins')">🔌 Installed Plugins (${loadedApis.size})</button>
+      <button class="tab-btn" onclick="switchTab('settings')">⚙️ Extension Settings</button>
+    </div>
+
+    <div id="tab-plugins" class="tab-content active">
+      <div class="plugin-list">
+        $pluginCards
+      </div>
+    </div>
+
+    <div id="tab-settings" class="tab-content">
+      <div class="card">
+        <h3 style="margin-bottom: 1.25rem; font-size: 1.1rem;">⚙️ Extension Configuration</h3>
+        <form action="/api/settings" method="POST">
+          <div class="form-group">
+            <label for="token">FebBox Authentication Token</label>
+            <div class="desc">Enter your FebBox token to stream premium hoster links.</div>
+            <input type="text" class="form-control" id="token" name="token" value="$febboxToken" placeholder="Paste FebBox token">
+          </div>
+
+          <div class="form-group">
+            <label for="showbox_ui_token">ShowBox Token</label>
+            <div class="desc">Token for ShowBox / FebBox UI integrations.</div>
+            <input type="text" class="form-control" id="showbox_ui_token" name="showbox_ui_token" value="$showboxToken" placeholder="Paste ShowBox token">
+          </div>
+
+          <div class="form-group">
+            <label for="wyzie_subs_api_key">Wyzie Subtitles API Key</label>
+            <div class="desc">API key for automatic multi-language subtitle fetching.</div>
+            <input type="text" class="form-control" id="wyzie_subs_api_key" name="wyzie_subs_api_key" value="$wyzieKey" placeholder="Paste Wyzie API Key">
+          </div>
+
+          <div class="form-group">
+            <label for="moviebox_host">MovieBox Server Mirror</label>
+            <div class="desc">Select the API mirror used for MovieBox scraper engines.</div>
+            <select class="form-control" id="moviebox_host" name="moviebox_host">
+              <option value="https://api3.aoneroom.com" ${if (movieboxHost.contains("api3")) "selected" else ""}>Server 1 (api3.aoneroom.com)</option>
+              <option value="https://api.aoneroom.com" ${if (movieboxHost == "https://api.aoneroom.com") "selected" else ""}>Server 2 (api.aoneroom.com)</option>
+              <option value="https://api1.aoneroom.com" ${if (movieboxHost.contains("api1")) "selected" else ""}>Server 3 (api1.aoneroom.com)</option>
+              <option value="https://api2.aoneroom.com" ${if (movieboxHost.contains("api2")) "selected" else ""}>Server 4 (api2.aoneroom.com)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="ScrapeConcurrency">Scrape Concurrency</label>
+            <div class="desc">Maximum parallel search threads (-1 = unlimited, default: 10).</div>
+            <input type="number" class="form-control" id="ScrapeConcurrency" name="ScrapeConcurrency" value="$concurrency">
+          </div>
+
+          <div class="form-group">
+            <label>Sub-provider Catalogs</label>
+            <div class="checkbox-group">
+              <input type="checkbox" id="ProviderTmdb" name="ProviderTmdb" value="true" ${if (tmdbEnabled) "checked" else ""}>
+              <label for="ProviderTmdb" style="margin:0; font-weight: normal;">Enable TMDB Catalog</label>
+            </div>
+            <div class="checkbox-group">
+              <input type="checkbox" id="ProviderCineStream" name="ProviderCineStream" value="true" ${if (cineStreamEnabled) "checked" else ""}>
+              <label for="ProviderCineStream" style="margin:0; font-weight: normal;">Enable CineStream Catalog</label>
+            </div>
+            <div class="checkbox-group">
+              <input type="checkbox" id="ProviderSimkl" name="ProviderSimkl" value="true" ${if (simklEnabled) "checked" else ""}>
+              <label for="ProviderSimkl" style="margin:0; font-weight: normal;">Enable Simkl Catalog</label>
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">💾 Save Extension Settings</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const manifestUrl = window.location.origin + '/manifest.json';
+    const stremioProtocolUrl = manifestUrl.replace(/^https?:\/\//, 'stremio://');
+    const stremioWebUrl = 'https://web.stremio.com/#/addons?addon=' + encodeURIComponent(manifestUrl);
+
+    document.getElementById('btn-stremio').href = stremioProtocolUrl;
+    document.getElementById('btn-web').href = stremioWebUrl;
+
+    function copyManifestUrl() {
+      navigator.clipboard.writeText(manifestUrl).then(() => {
+        alert('Copied Manifest URL to clipboard!\n' + manifestUrl);
+      });
+    }
+
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      document.getElementById('tab-' + tabId).classList.add('active');
+      event.target.classList.add('active');
+    }
+  </script>
+</body>
+</html>"""
     }
 }
 

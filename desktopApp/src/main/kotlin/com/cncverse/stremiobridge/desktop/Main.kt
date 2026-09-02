@@ -41,7 +41,36 @@ private const val DEFAULT_PORT = 8080
 private const val OMG10 = "aHR0cHM6Ly9vbWcxMC5jb20vNC8xMTEwNDQ4OQ=="
 private val CACHE_DIR = File(System.getProperty("user.home"), ".cncverse_bridge").absolutePath
 
-fun main() = application {
+fun main(args: Array<String>) {
+    if (args.contains("headless") || System.getenv("HEADLESS") == "1" || java.awt.GraphicsEnvironment.isHeadless()) {
+        runHeadless()
+    } else {
+        runGui()
+    }
+}
+
+private fun runHeadless() {
+    runBlocking {
+        println("🚀 Starting CNCVerse Bridge in Headless Server Mode...")
+        val pluginLoader = PluginLoader()
+        GlobalPluginManager.loader = pluginLoader
+
+        val installed = withContext(Dispatchers.IO) { PluginInstaller.loadInstalledPlugins(CACHE_DIR) }
+        RepoState.setInstalledPlugins(installed)
+        installed.forEach { RepoState.setInstallState(it.internalName, PluginInstallState.Installed) }
+
+        val cs3Files = PluginInstaller.getInstalledFiles(CACHE_DIR)
+        GlobalPluginManager.reloadAllPlugins(installed, cs3Files)
+
+        val appScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+        startBridge(appScope)
+
+        println("✅ CNCVerse Bridge Server is running 24/7!")
+        awaitCancellation()
+    }
+}
+
+private fun runGui() = application {
     // Surface fatal errors (e.g. Compose render-thread exceptions) into the
     // app log so crashes in the packaged exe are diagnosable.
     Thread.setDefaultUncaughtExceptionHandler { thread, e ->
