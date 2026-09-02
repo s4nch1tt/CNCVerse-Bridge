@@ -1,9 +1,9 @@
-name: Deploy CNCVerse Bridge
+name: Deploy CNCVerse Bridge 24/7
 
 on:
   workflow_dispatch:
-  # schedule:
-  #   - cron: '0 */5 * * *' # Enable after testing for 24/7 continuous uptime
+  schedule:
+    - cron: '0 */5 * * *'
 
 jobs:
   run-bridge:
