@@ -227,9 +227,13 @@ object StremioServer {
             }
 
             get("/api/install-plugin") {
-                val internalName = call.request.queryParameters["internalName"] ?: return@get call.respond(HttpStatusCode.BadRequest)
+                val internalName = call.request.queryParameters["internalName"]?.trim() ?: return@get call.respond(HttpStatusCode.BadRequest)
                 val cDir = currentCacheDir ?: File(System.getProperty("user.home"), ".cncverse_bridge").absolutePath
-                val ap = RepoState.availablePlugins.value.find { it.plugin.internalName == internalName }
+                var ap = RepoState.availablePlugins.value.find { it.plugin.internalName.equals(internalName, ignoreCase = true) }
+                if (ap == null) {
+                    withContext(Dispatchers.IO) { RepoManager.refreshAllRepos() }
+                    ap = RepoState.availablePlugins.value.find { it.plugin.internalName.equals(internalName, ignoreCase = true) }
+                }
                 if (ap != null) {
                     withContext(Dispatchers.IO) {
                         val success = PluginInstaller.installPlugin(ap, cDir)
@@ -240,8 +244,12 @@ object StremioServer {
                             val cs3Files = PluginInstaller.getInstalledFiles(cDir)
                             GlobalPluginManager.reloadAllPlugins(installed, cs3Files)
                             ServerState.info("Successfully installed and loaded '${ap.plugin.name}'")
+                        } else {
+                            ServerState.error("Failed to install '${ap.plugin.name}'")
                         }
                     }
+                } else {
+                    ServerState.warn("Could not find extension '$internalName' in available repositories")
                 }
                 call.respondRedirect("/?v=${System.currentTimeMillis()}#extensions")
             }
@@ -498,6 +506,45 @@ object StremioServer {
         }
     }
 
+    private fun sortStreamsByQuality(streams: List<StremioStream>): List<StremioStream> {
+        fun extractScore(stream: StremioStream): Int {
+            val text = "${stream.name.orEmpty()} ${stream.title.orEmpty()} ${stream.description.orEmpty()}".lowercase()
+            
+            // Base resolution score
+            val resScore = when {
+                text.contains("4k") || text.contains("2160p") || text.contains("uhd") -> 216000
+                text.contains("1440p") || text.contains("2k") || text.contains("qhd") -> 144000
+                text.contains("1080p") || text.contains("fhd") || text.contains("full hd") -> 108000
+                text.contains("720p") || text.contains("hd") -> 72000
+                text.contains("576p") -> 57600
+                text.contains("480p") || text.contains("sd") -> 48000
+                text.contains("360p") -> 36000
+                text.contains("240p") -> 24000
+                else -> {
+                    val match = Regex("""\b(2160|1440|1080|720|576|480|360|240)\b""").find(text)
+                    if (match != null) {
+                        (match.groupValues[1].toIntOrNull() ?: 500) * 100
+                    } else {
+                        50000
+                    }
+                }
+            }
+
+            // Quality feature bonuses
+            var featureBonus = 0
+            if (text.contains("remux") || text.contains("bluray") || text.contains("bdrip")) featureBonus += 500
+            if (text.contains("web-dl") || text.contains("webrip")) featureBonus += 300
+            if (text.contains("hdr") || text.contains("hdr10") || text.contains("dolby vision") || text.contains("dv")) featureBonus += 200
+            if (text.contains("imax")) featureBonus += 100
+            if (text.contains("10bit")) featureBonus += 50
+            if (text.contains("gofile") || text.contains("driveleech") || text.contains("fast")) featureBonus += 20
+
+            return resScore + featureBonus
+        }
+
+        return streams.sortedWith(compareByDescending<StremioStream> { extractScore(it) })
+    }
+
     // ── Stream builder ────────────────────────────────────────────────────────
 
     private suspend fun buildStreams(type: String, id: String): List<StremioStream> {
@@ -507,7 +554,7 @@ object StremioServer {
             val api = loadedApis.find { it.internalName == internalName } ?: return emptyList()
             if (disabledPlugins.contains(api.internalName)) return emptyList()
             return try {
-                api.loadLinks(dataUrl)
+                sortStreamsByQuality(api.loadLinks(dataUrl))
             } catch (e: Throwable) {
                 ServerState.warn("Stream error for $internalName: ${e.message}")
                 emptyList()
@@ -618,8 +665,9 @@ object StremioServer {
                     }
                 }.awaitAll().forEach { allStreams.addAll(it) }
             }
-            ServerState.info("Returning total ${allStreams.size} streams")
-            allStreams
+            val sortedStreams = sortStreamsByQuality(allStreams)
+            ServerState.info("Returning total ${sortedStreams.size} sorted streams")
+            sortedStreams
         } catch (e: Exception) {
             ServerState.warn("TMDB resolve error for $id: ${e.stackTraceToString()}")
             emptyList()

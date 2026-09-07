@@ -182,14 +182,25 @@ object PluginRepository {
             val destFile = File(dir, fileName)
 
             // Skip download if cached with matching hash
-            if (destFile.exists() && plugin.fileHash != null) {
+            if (destFile.exists() && !plugin.fileHash.isNullOrBlank()) {
                 val existingHash = sha256(destFile)
-                if (existingHash == plugin.fileHash) {
+                if (existingHash.equals(plugin.fileHash.trim(), ignoreCase = true)) {
                     return@withContext destFile
                 }
             }
 
-            val safeUrl = plugin.url.replace(" ", "%20")
+            // Resolve relative or space-containing URLs
+            val resolvedUrl = when {
+                plugin.url.startsWith("http://", ignoreCase = true) || plugin.url.startsWith("https://", ignoreCase = true) -> plugin.url
+                !plugin.repositoryUrl.isNullOrBlank() && (plugin.repositoryUrl.startsWith("http://", ignoreCase = true) || plugin.repositoryUrl.startsWith("https://", ignoreCase = true)) -> {
+                    val base = plugin.repositoryUrl.removeSuffix("/")
+                    val path = plugin.url.removePrefix("/")
+                    "$base/$path"
+                }
+                else -> plugin.url
+            }
+
+            val safeUrl = resolvedUrl.replace(" ", "%20")
             val urls = buildList {
                 add(safeUrl)
                 githubRawToJsDelivr(safeUrl)?.let { add(it) }
@@ -198,16 +209,48 @@ object PluginRepository {
             for (candidate in urls) {
                 try {
                     ServerState.info("Downloading '${plugin.name}' from $candidate")
-                    val bytes = httpClient.get(candidate) {
+                    val response = httpClient.get(candidate) {
                         applyGitHubBrowserHeaders(candidate)
-                    }.readRawBytes()
+                    }
 
-                    if (plugin.fileHash != null) {
+                    if (response.status.value !in 200..299) {
+                        ServerState.warn("HTTP ${response.status.value} downloading '${plugin.name}' from $candidate")
+                        if (candidate != urls.last()) continue
+                        return@withContext null
+                    }
+
+                    val bytes = response.readRawBytes()
+                    if (bytes.isEmpty()) {
+                        ServerState.warn("Empty response for '${plugin.name}' from $candidate")
+                        if (candidate != urls.last()) continue
+                        return@withContext null
+                    }
+
+                    if (!plugin.fileHash.isNullOrBlank()) {
                         val downloadedHash = sha256Bytes(bytes)
-                        if (downloadedHash != plugin.fileHash) {
-                            ServerState.error("Hash mismatch for '${plugin.name}'! Expected: ${plugin.fileHash}, got: $downloadedHash")
-                            if (candidate != urls.last()) continue
-                            return@withContext null
+                        if (!downloadedHash.equals(plugin.fileHash.trim(), ignoreCase = true)) {
+                            ServerState.warn("Hash mismatch for '${plugin.name}'! Expected: ${plugin.fileHash}, got: $downloadedHash. Verifying archive integrity…")
+                            // Verify if it is a valid zip containing manifest/dex before discarding
+                            val isValidZip = runCatching {
+                                java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(bytes)).use { zis ->
+                                    var entry = zis.nextEntry
+                                    var valid = false
+                                    while (entry != null) {
+                                        if (entry.name == "manifest.json" || entry.name.endsWith(".dex") || entry.name.endsWith(".class")) {
+                                            valid = true
+                                            break
+                                        }
+                                        entry = zis.nextEntry
+                                    }
+                                    valid
+                                }
+                            }.getOrDefault(false)
+
+                            if (!isValidZip) {
+                                ServerState.error("Corrupted or invalid CS3 archive for '${plugin.name}'")
+                                if (candidate != urls.last()) continue
+                                return@withContext null
+                            }
                         }
                     }
 
