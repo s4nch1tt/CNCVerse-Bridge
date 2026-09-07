@@ -108,16 +108,22 @@ class StremioForegroundService : Service() {
                 if (toUpdate.isNotEmpty()) {
                     ServerState.info("Auto-updating ${toUpdate.size} plugin(s)…")
                     PluginInstaller.autoUpdateInstalled(cacheDir)
+                    val updatedInstalled = PluginInstaller.loadInstalledPlugins(cacheDir)
+                    val updatedCs3Files = PluginInstaller.getInstalledFiles(cacheDir)
+                    GlobalPluginManager.reloadAllPlugins(updatedInstalled, updatedCs3Files)
                 }
             }.onFailure { e ->
                 ServerState.warn("Repo refresh error: ${e.message}")
             }
         }
 
-        // ── 3. (Removed) Load installed .cs3 files ───────────────────────────────────
-        // Plugins are now loaded globally by GlobalPluginManager in MainActivity on app launch.
-        ServerState.updateStatus(ServerStatus.Starting("Waiting for plugins…"))
-        GlobalPluginManager.isPluginsLoaded.first { it }
+        // ── 3. Load installed .cs3 files ───────────────────────────────────
+        ServerState.updateStatus(ServerStatus.Starting("Loading plugins…"))
+        if (GlobalPluginManager.loader == null) {
+            GlobalPluginManager.loader = PluginLoader(applicationContext)
+        }
+        val cs3Files = PluginInstaller.getInstalledFiles(cacheDir)
+        GlobalPluginManager.reloadAllPlugins(installedPlugins, cs3Files)
         val loadedInfos = ServerState.globalLoadedPlugins.value
 
         // ── 4. Start Ktor server ───────────────────────────────────────────
@@ -134,6 +140,27 @@ class StremioForegroundService : Service() {
         ServerState.updateStatus(runningStatus)
         updateNotification("Running on $ipAddress:$boundPort · ${loadedInfos.count { it.apiRegistered }} plugins active")
         ServerState.info("🎬 Stremio Bridge running at http://$ipAddress:$boundPort")
+
+        // ── 6. Periodic Background Extension Auto-Update (every 1 hour) ───
+        serviceScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(60 * 60 * 1000L)
+                runCatching {
+                    ServerState.info("Checking for extension updates…")
+                    RepoManager.refreshAllRepos()
+                    val toUpdate = RepoState.installedPlugins.value.filter {
+                        RepoState.getInstallState(it.internalName) is PluginInstallState.UpdateAvailable
+                    }
+                    if (toUpdate.isNotEmpty()) {
+                        ServerState.info("Auto-updating ${toUpdate.size} extension(s)…")
+                        PluginInstaller.autoUpdateInstalled(cacheDir)
+                        val updatedInstalled = PluginInstaller.loadInstalledPlugins(cacheDir)
+                        val updatedCs3Files = PluginInstaller.getInstalledFiles(cacheDir)
+                        GlobalPluginManager.reloadAllPlugins(updatedInstalled, updatedCs3Files)
+                    }
+                }
+            }
+        }
     }
 
     override fun onDestroy() {

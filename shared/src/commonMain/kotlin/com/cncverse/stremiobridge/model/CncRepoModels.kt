@@ -66,3 +66,16 @@ fun SitePlugin.toLoadedPluginInfo(apiRegistered: Boolean = false, hasSettings: B
         hasSettings   = hasSettings,
         apiRegistered = apiRegistered,
     )
+
+@Serializable
+data class PluginManifest(
+    @SerialName("name") val name: String? = null,
+    @SerialName("pluginClassName") val pluginClassName: String? = null,
+    @SerialName("requiresResources") val requiresResources: Boolean = false,
+    @SerialName("version") val version: Int? = null,
+    @SerialName("description") val description: String? = null,
+    @SerialName("authors") val authors: List<String> = emptyList(),
+    @SerialName("tvTypes") val tvTypes: List<String>? = null,
+    @SerialName("language") val language: String? = null,
+    @SerialName("iconUrl") val iconUrl: String? = null,
+)

@@ -24,9 +24,21 @@ jobs:
           curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
           sudo dpkg -i cloudflared.deb
 
+      - name: Restore Bridge Data & Extensions Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cncverse
+            ~/.cncverse_bridge
+          key: cncverse-bridge-cache-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            cncverse-bridge-cache-
+
       - name: Configure Storage & Extension Settings
         env:
           EXTENSION_SETTINGS: ${{ secrets.EXTENSION_SETTINGS }}
+          INSTALLED_PLUGINS: ${{ secrets.INSTALLED_PLUGINS }}
+          REPO_URLS: ${{ secrets.REPO_URLS }}
         run: |
           mkdir -p ~/.cncverse
           mkdir -p ~/.cncverse_bridge
@@ -34,11 +46,20 @@ jobs:
             echo "$EXTENSION_SETTINGS" > ~/.cncverse/ext_settings.txt
             echo "Loaded EXTENSION_SETTINGS secret into ~/.cncverse/ext_settings.txt"
           fi
+          if [ -n "$INSTALLED_PLUGINS" ]; then
+            echo "$INSTALLED_PLUGINS" > ~/.cncverse_bridge/installed_plugins.json
+            echo "Loaded INSTALLED_PLUGINS secret into ~/.cncverse_bridge/installed_plugins.json"
+          fi
+          if [ -n "$REPO_URLS" ]; then
+            echo "$REPO_URLS" > ~/.cncverse/repos.txt
+            echo "Loaded REPO_URLS secret into ~/.cncverse/repos.txt"
+          fi
 
       - name: Launch Server & Cloudflare Tunnel
         env:
           CF_WORKER_URL: ${{ secrets.CF_WORKER_URL }}
           CF_WORKER_SECRET: ${{ secrets.CF_WORKER_SECRET }}
+          AUTO_INSTALL_EXTENSIONS: ${{ secrets.AUTO_INSTALL_EXTENSIONS || 'all' }}
           HEADLESS: "1"
         run: |
           # 1. Start Headless Server in background

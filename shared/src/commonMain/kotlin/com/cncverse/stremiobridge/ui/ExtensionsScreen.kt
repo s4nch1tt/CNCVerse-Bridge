@@ -56,7 +56,7 @@ fun ExtensionsScreen(
                 (selectedRepoFilter == null || ap.repoEntry.url == selectedRepoFilter) &&
                 (searchQuery.isBlank() || ap.plugin.name.contains(searchQuery, ignoreCase = true) ||
                     ap.plugin.description?.contains(searchQuery, ignoreCase = true) == true) &&
-                (!showOnlyInstalled || installedPlugins.any { it.internalName == ap.plugin.internalName && it.repoUrl == ap.repoEntry.url })
+                (!showOnlyInstalled || installedPlugins.any { it.internalName == ap.plugin.internalName })
             }
             .sortedBy { it.plugin.name }
     }
@@ -239,10 +239,12 @@ fun ExtensionsScreen(
                 ) { ap ->
                     val globalState = installStates[ap.plugin.internalName] ?: PluginInstallState.NotInstalled
                     val inst = installedPlugins.find { it.internalName == ap.plugin.internalName }
-                    val installState = if (inst != null && inst.repoUrl != ap.repoEntry.url) {
-                        if (globalState is PluginInstallState.Installing) globalState else PluginInstallState.NotInstalled
-                    } else {
-                        globalState
+                    val installState = when {
+                        globalState is PluginInstallState.Installing -> globalState
+                        inst != null -> {
+                            if (globalState is PluginInstallState.UpdateAvailable) globalState else PluginInstallState.Installed
+                        }
+                        else -> globalState
                     }
                     val loadedInfo = globalLoadedPlugins.find { it.internalName == ap.plugin.internalName }
                     PluginCard(

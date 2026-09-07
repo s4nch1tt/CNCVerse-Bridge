@@ -1,6 +1,7 @@
 package com.cncverse.stremiobridge.plugin
 
 import com.cncverse.stremiobridge.model.SitePlugin
+import com.cncverse.stremiobridge.model.PluginManifest
 import com.cncverse.stremiobridge.model.StremioStream
 import com.cncverse.stremiobridge.model.StreamBehaviorHints
 import com.cncverse.stremiobridge.model.ProxyHeaders
@@ -469,16 +470,6 @@ actual class PluginLoader {
         ServerState.info("All plugins unloaded")
     }
 }
-
-// ── Plugin manifest data class ────────────────────────────────────────────────
-
-@Serializable
-private data class PluginManifest(
-    val name: String? = null,
-    val pluginClassName: String? = null,
-    val requiresResources: Boolean = false,
-    val version: Int? = null,
-)
 
 // ── Direct MainApiWrapper (typed calls against cloudstream-api.jar) ──────────
 

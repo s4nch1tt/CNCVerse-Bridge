@@ -114,6 +114,18 @@ class MainActivity : com.lagradost.cloudstream3.MainActivity() {
 
             // Fetch metadata and available plugins immediately so the UI is populated
             RepoManager.refreshAllRepos()
+
+            // Auto-update any outdated extensions immediately
+            val toUpdate = RepoState.installedPlugins.value.filter {
+                RepoState.getInstallState(it.internalName) is PluginInstallState.UpdateAvailable
+            }
+            if (toUpdate.isNotEmpty()) {
+                ServerState.info("Auto-updating ${toUpdate.size} extension(s)…")
+                PluginInstaller.autoUpdateInstalled(cacheDir)
+                val updatedInstalled = PluginInstaller.loadInstalledPlugins(cacheDir)
+                val updatedCs3Files = PluginInstaller.getInstalledFiles(cacheDir)
+                GlobalPluginManager.reloadAllPlugins(updatedInstalled, updatedCs3Files)
+            }
         }
 
         setContent {
@@ -154,7 +166,19 @@ class MainActivity : com.lagradost.cloudstream3.MainActivity() {
                 },
                 onAddRepo           = { url -> RepoManager.addRepo(url) },
                 onRemoveRepo        = { url -> RepoManager.removeRepo(url) },
-                onRefreshRepos      = { RepoManager.refreshAllRepos() },
+                onRefreshRepos      = {
+                    RepoManager.refreshAllRepos()
+                    val toUpdate = RepoState.installedPlugins.value.filter {
+                        RepoState.getInstallState(it.internalName) is PluginInstallState.UpdateAvailable
+                    }
+                    if (toUpdate.isNotEmpty()) {
+                        ServerState.info("Auto-updating ${toUpdate.size} extension(s)…")
+                        PluginInstaller.autoUpdateInstalled(cacheDir)
+                        val updatedInstalled = PluginInstaller.loadInstalledPlugins(cacheDir)
+                        val updatedCs3Files = PluginInstaller.getInstalledFiles(cacheDir)
+                        GlobalPluginManager.reloadAllPlugins(updatedInstalled, updatedCs3Files)
+                    }
+                },
                 windowWidthClass    = windowSizeClass.widthSizeClass,
             )
         }

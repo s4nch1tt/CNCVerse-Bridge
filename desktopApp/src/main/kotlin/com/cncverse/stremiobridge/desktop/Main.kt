@@ -349,6 +349,35 @@ private suspend fun startBridge(appScope: CoroutineScope) {
             if (toUpdate.isNotEmpty()) {
                 ServerState.info("Auto-updating ${toUpdate.size} plugin(s)…")
                 PluginInstaller.autoUpdateInstalled(CACHE_DIR)
+                val updatedInstalled = PluginInstaller.loadInstalledPlugins(CACHE_DIR)
+                val updatedCs3Files = PluginInstaller.getInstalledFiles(CACHE_DIR)
+                GlobalPluginManager.reloadAllPlugins(updatedInstalled, updatedCs3Files)
+            }
+
+            val autoInstallRaw = System.getenv("AUTO_INSTALL_EXTENSIONS")
+            if (!autoInstallRaw.isNullOrBlank()) {
+                val targets = autoInstallRaw.split(",").map { it.trim().lowercase() }.filter { it.isNotBlank() }
+                if (targets.isNotEmpty()) {
+                    val available = RepoState.availablePlugins.value
+                    val toInstall = available.filter { ap ->
+                        targets.contains("all") ||
+                        targets.contains(ap.plugin.internalName.lowercase()) ||
+                        targets.contains(ap.plugin.name.lowercase())
+                    }
+                    var newlyInstalled = false
+                    toInstall.forEach { ap ->
+                        if (!RepoState.isInstalled(ap.plugin.internalName)) {
+                            ServerState.info("Auto-installing requested extension '${ap.plugin.name}'…")
+                            val ok = PluginInstaller.installPlugin(ap, CACHE_DIR)
+                            if (ok) newlyInstalled = true
+                        }
+                    }
+                    if (newlyInstalled) {
+                        val updatedInstalled = PluginInstaller.loadInstalledPlugins(CACHE_DIR)
+                        val updatedCs3Files = PluginInstaller.getInstalledFiles(CACHE_DIR)
+                        GlobalPluginManager.reloadAllPlugins(updatedInstalled, updatedCs3Files)
+                    }
+                }
             }
         }.onFailure { e ->
             ServerState.warn("Repo refresh error: ${e.message}")
@@ -379,6 +408,26 @@ private suspend fun startBridge(appScope: CoroutineScope) {
     )
     ServerState.info("🎬 Bridge running at http://$ipAddress:$boundPort/manifest.json")
 
+    // Periodic Background Extension Auto-Update (every 1 hour)
+    appScope.launch(Dispatchers.IO) {
+        while (isActive) {
+            delay(60 * 60 * 1000L)
+            runCatching {
+                ServerState.info("Checking for extension updates…")
+                RepoManager.refreshAllRepos()
+                val toUpdate = RepoState.installedPlugins.value.filter {
+                    RepoState.getInstallState(it.internalName) is PluginInstallState.UpdateAvailable
+                }
+                if (toUpdate.isNotEmpty()) {
+                    ServerState.info("Auto-updating ${toUpdate.size} extension(s)…")
+                    PluginInstaller.autoUpdateInstalled(CACHE_DIR)
+                    val updatedInstalled = PluginInstaller.loadInstalledPlugins(CACHE_DIR)
+                    val updatedCs3Files = PluginInstaller.getInstalledFiles(CACHE_DIR)
+                    GlobalPluginManager.reloadAllPlugins(updatedInstalled, updatedCs3Files)
+                }
+            }
+        }
+    }
 }
 
 private fun getLocalIpAddress(): String? = try {

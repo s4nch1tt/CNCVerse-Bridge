@@ -286,6 +286,17 @@ object StremioServer {
             get("/api/refresh-repos") {
                 withContext(Dispatchers.IO) {
                     RepoManager.refreshAllRepos()
+                    val cDir = currentCacheDir ?: File(System.getProperty("user.home"), ".cncverse_bridge").absolutePath
+                    val toUpdate = RepoState.installedPlugins.value.filter {
+                        RepoState.getInstallState(it.internalName) is PluginInstallState.UpdateAvailable
+                    }
+                    if (toUpdate.isNotEmpty()) {
+                        ServerState.info("Auto-updating ${toUpdate.size} extension(s)…")
+                        PluginInstaller.autoUpdateInstalled(cDir)
+                        val updatedInstalled = PluginInstaller.loadInstalledPlugins(cDir)
+                        val updatedCs3Files = PluginInstaller.getInstalledFiles(cDir)
+                        GlobalPluginManager.reloadAllPlugins(updatedInstalled, updatedCs3Files)
+                    }
                 }
                 call.respondRedirect("/?v=${System.currentTimeMillis()}#extensions")
             }

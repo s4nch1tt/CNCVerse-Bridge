@@ -21,21 +21,80 @@ object PluginInstaller {
     /** Load persisted installed plugin list from disk. */
     fun loadInstalledPlugins(cacheDir: String): List<InstalledPlugin> {
         val f = installedFile(cacheDir)
-        if (!f.exists()) return emptyList()
-        return try {
-            installedJson.decodeFromString<List<InstalledPlugin>>(f.readText())
-        } catch (e: Exception) {
+        val loaded = if (f.exists()) {
+            try {
+                installedJson.decodeFromString<List<InstalledPlugin>>(f.readText())
+            } catch (e: Exception) {
+                ServerState.error("Failed to read installed_plugins.json: ${e.message}")
+                emptyList()
+            }
+        } else {
             emptyList()
+        }
+
+        // Recover any .cs3 files physically present in plugins/ that might be missing from JSON
+        val dir = File(cacheDir, "plugins")
+        if (!dir.exists()) return loaded
+
+        val loadedMap = loaded.associateBy { it.internalName }.toMutableMap()
+        dir.listFiles()?.filter { it.isFile && it.extension.equals("cs3", ignoreCase = true) }?.forEach { cs3File ->
+            val manifest = readManifestFromZip(cs3File)
+            val internalName = cs3File.nameWithoutExtension
+            val alreadyPresent = loadedMap.containsKey(internalName) ||
+                    loadedMap.values.any { it.internalName.equals(internalName, ignoreCase = true) }
+            if (!alreadyPresent) {
+                val displayName = manifest?.name ?: internalName
+                val version = manifest?.version ?: 1
+                loadedMap[internalName] = InstalledPlugin(
+                    internalName = internalName,
+                    displayName = displayName,
+                    version = version,
+                    fileHash = null,
+                    repoUrl = "",
+                    localPath = cs3File.absolutePath,
+                    iconUrl = manifest?.iconUrl,
+                    tvTypes = manifest?.tvTypes ?: emptyList(),
+                    language = manifest?.language,
+                    authors = manifest?.authors ?: emptyList(),
+                    description = manifest?.description,
+                )
+            }
+        }
+
+        val finalList = loadedMap.values.toList()
+        if (finalList.size != loaded.size) {
+            try {
+                f.parentFile?.mkdirs()
+                f.writeText(installedJson.encodeToString(finalList))
+            } catch (_: Exception) {}
+        }
+        return finalList
+    }
+
+    private fun readManifestFromZip(file: File): com.cncverse.stremiobridge.model.PluginManifest? {
+        return try {
+            java.util.zip.ZipFile(file).use { zip ->
+                val entry = zip.getEntry("manifest.json") ?: return null
+                java.io.InputStreamReader(zip.getInputStream(entry)).use { reader ->
+                    installedJson.decodeFromString<com.cncverse.stremiobridge.model.PluginManifest>(reader.readText())
+                }
+            }
+        } catch (_: Throwable) {
+            null
         }
     }
 
     /** Persist the current installed plugin list to disk. */
     private fun saveInstalledPlugins(cacheDir: String) {
         try {
-            installedFile(cacheDir).writeText(
+            val f = installedFile(cacheDir)
+            f.parentFile?.mkdirs()
+            f.writeText(
                 installedJson.encodeToString(RepoState.installedPlugins.value)
             )
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            ServerState.error("Failed to save installed plugins: ${e.message}")
+        }
     }
 
     /** Install a plugin: download its .cs3 file and mark it as installed. */
@@ -102,7 +161,9 @@ object PluginInstaller {
         }
 
         toUpdate.forEach { inst ->
-            val ap = available.find { it.plugin.internalName == inst.internalName && it.repoEntry.url == inst.repoUrl } ?: return@forEach
+            val ap = available.find { it.plugin.internalName == inst.internalName && it.repoEntry.url == inst.repoUrl }
+                ?: available.find { it.plugin.internalName == inst.internalName }
+                ?: return@forEach
             ServerState.info("Auto-updating '${inst.displayName}' to v${ap.plugin.version}…")
             installPlugin(ap, cacheDir)
         }
@@ -112,9 +173,42 @@ object PluginInstaller {
     fun getInstalledFiles(cacheDir: String): Map<String, File> {
         val dir = File(cacheDir, "plugins")
         if (!dir.exists()) return emptyMap()
-        return RepoState.installedPlugins.value.mapNotNull { inst ->
-            val f = File(inst.localPath)
-            if (f.exists()) inst.internalName to f else null
-        }.toMap()
+
+        val installed = RepoState.installedPlugins.value
+        val result = mutableMapOf<String, File>()
+
+        installed.forEach { inst ->
+            val sanitized = inst.internalName.replace(Regex("[^A-Za-z0-9._-]"), "_").lowercase()
+            val directFile = File(inst.localPath)
+            val bySanitized = File(dir, "${sanitized}.cs3")
+            val byName = File(dir, "${inst.internalName}.cs3")
+            val fileInDir = dir.listFiles()?.firstOrNull { f ->
+                f.isFile && f.extension.equals("cs3", ignoreCase = true) &&
+                (f.nameWithoutExtension.equals(sanitized, ignoreCase = true) ||
+                 f.nameWithoutExtension.equals(inst.internalName, ignoreCase = true))
+            }
+            val target = when {
+                directFile.exists() -> directFile
+                bySanitized.exists() -> bySanitized
+                byName.exists() -> byName
+                fileInDir != null -> fileInDir
+                else -> null
+            }
+            if (target != null) {
+                result[inst.internalName] = target
+            }
+        }
+
+        // Also add any other .cs3 files in dir
+        dir.listFiles()?.forEach { f ->
+            if (f.isFile && f.extension.equals("cs3", ignoreCase = true)) {
+                val baseName = f.nameWithoutExtension
+                if (!result.containsKey(baseName)) {
+                    result[baseName] = f
+                }
+            }
+        }
+
+        return result
     }
 }

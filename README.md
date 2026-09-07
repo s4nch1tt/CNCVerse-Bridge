@@ -1,69 +1,164 @@
-# CNCVerse Bridge
+# 🎬 CNCVerse Bridge
 
 [![Join us on Telegram](https://img.shields.io/badge/Telegram-Join%20Group-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/cncverse)
+[![Cloudflare Worker](https://img.shields.io/badge/Cloudflare-Worker%20Gateway-F38020?style=for-the-badge&logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
+[![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-24%2F7%20Hosting-2088FF?style=for-the-badge&logo=github-actions&logoColor=white)](https://github.com/features/actions)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support%20Project-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/nivincnc)
 
-An application addon to run Cloudstream extensions on Nuvio, Stremio, and every other Stremio-supported platform.
+An application addon bridge that runs **Cloudstream extensions directly on Stremio, Nuvio, and all Stremio-supported platforms**.
 
-> **Note:** This app is currently in the alpha stage. You may experience bugs or crashes. Join our community to report issues! If you are a developer, PRs for fixes are always welcome.
+---
 
-## Downloads
+## 🌟 Key Features
 
-CNCVerse Bridge is available for both Android and Desktop (Windows).
+- **🌐 24/7 Free Cloud Hosting:** Run for free on GitHub Actions + Cloudflare Workers with a permanent `*.workers.dev` URL.
+- **⚡ All-Platform Stremio Support:** Works seamlessly on Android TV, Google TV, FireStick, Android, iOS / iPadOS (Stremio Web), Windows, macOS, and Linux.
+- **🔄 Always-On Auto Updates:** Extensions automatically update in the background whenever repository updates are released.
+- **💾 Full Extension & Data Persistence:** Automatically caches and recovers all your installed `.cs3` plugins and settings across runner restarts.
+- **📱 Native Android & Desktop Apps:** Run locally on your phone or PC with one-click Stremio integration.
 
+---
+
+## 🚀 24/7 Free Cloud Deployment (Permanent `workers.dev` URL)
+
+Host your own private, permanent CNCVerse Bridge in the cloud for **100% free** using GitHub Actions and Cloudflare Workers. Your Stremio addon URL will remain permanent and never change!
+
+```mermaid
+flowchart LR
+    Stremio["📺 Stremio Client\n(TV / Phone / Web)"] -->|"Permanent URL\n(https://your-worker.workers.dev)"| CF["⚡ Cloudflare Worker\n(Permanent Gateway)"]
+    CF -->|"Tunnel Sync"| GHA["🤖 GitHub Actions Runner\n(24/7 CNCVerse Bridge)"]
+    GHA -->|"Streams & Metadata"| CF
+```
+
+---
+
+### Step 1: Deploy the Cloudflare Worker Gateway
+
+1. Log into your [Cloudflare Dashboard](https://dash.cloudflare.com/).
+2. Go to **Workers & Pages** → click **Create Application** → **Create Worker**.
+   * Give it a name (e.g. `cncverse-bridge`).
+   * Click **Deploy**.
+3. Create a **KV Namespace**:
+   * On the left sidebar under **Workers & Pages**, click **KV**.
+   * Click **Create a Namespace** → Name it **`STREMIO_KV`** → click **Add**.
+4. Configure Worker Settings:
+   * Go back to **Workers & Pages** → click on your `cncverse-bridge` worker → **Settings**.
+   * Go to **Bindings** (or **Variables and Secrets**):
+     * Under **KV Namespace Bindings**, click **Add binding**:
+       * Variable name: `STREMIO_KV`
+       * KV namespace: select `STREMIO_KV`
+     * Under **Environment Variables**, click **Add variable**:
+       * Variable name: `CF_WORKER_SECRET`
+       * Value: Any secret password of your choice (e.g. `my_secure_secret_123`)
+   * Click **Save and Deploy**.
+5. Paste the Worker Code:
+   * On your Worker page, click **Edit Code** (top right).
+   * Replace the editor content with the code from [`cloudflare-worker/stremio-gateway.js`](cloudflare-worker/stremio-gateway.js).
+   * Click **Deploy**.
+6. **Copy your Worker URL** (e.g. `https://cncverse-bridge.<your-subdomain>.workers.dev`).
+
+---
+
+### Step 2: Fork & Add GitHub Secrets
+
+1. **Fork** this repository to your own GitHub account.
+2. In your forked repository, go to **Settings** → **Secrets and variables** → **Actions**.
+3. Click **New repository secret** and add the following:
+
+| Secret Name | Required | Description / Example |
+| :--- | :---: | :--- |
+| `CF_WORKER_URL` | **Yes** | Your Cloudflare Worker URL, e.g. `https://cncverse-bridge.<your-subdomain>.workers.dev` |
+| `CF_WORKER_SECRET` | **Yes** | The exact secret password you set in Cloudflare (e.g. `my_secure_secret_123`) |
+| `AUTO_INSTALL_EXTENSIONS` | *Optional* | `all` (default) or comma-separated list of extensions (e.g. `SuperStream,Sorastream,SFlix`) |
+| `EXTENSION_SETTINGS` | *Optional* | Content of your `ext_settings.txt` (FebBox tokens, ShowBox tokens, scraper settings) |
+| `REPO_URLS` | *Optional* | Additional repository URLs (one per line) |
+
+---
+
+### Step 3: Start the 24/7 Runner
+
+1. Go to the **Actions** tab in your forked repository.
+2. Under All workflows, click **Deploy CNCVerse Bridge 24/7**.
+3. Click **Run workflow** → **Run workflow**.
+4. The workflow will automatically launch, restore/cache your extensions, start the server, and sync its live tunnel with your Cloudflare Worker.
+
+> [!TIP]
+> The workflow automatically triggers every 5 hours via GitHub Actions schedule to keep your bridge running 24/7 without interruption.
+
+---
+
+### Step 4: Add to Stremio
+
+1. Open **Stremio** on any device (Android TV, Mobile, Desktop, Web, FireStick, iOS/iPadOS).
+2. Navigate to the **Addons** section.
+3. In the search bar / Addon URL field, paste your permanent Cloudflare Worker URL:
+   ```text
+   https://cncverse-bridge.<your-subdomain>.workers.dev/manifest.json
+   ```
+4. Click **Install**. You're all set! 🍿
+
+---
+
+## 📱 Local Installation (Android & Desktop)
+
+If you prefer running the bridge locally on your own devices:
+
+### 📥 Downloads
 Go to the **[Releases](../../releases)** page to download:
 - **Android:** Download the `.apk` file.
-- **Desktop:** Download the `.msi` or `.exe` file for windows.
+- **Desktop:** Download the `.msi` or `.exe` file for Windows.
 
 ---
 
-## Getting Started (Android)
+### Getting Started on Android
 
-1. **Install and Run:** Install the downloaded `.apk` and open the CNCVerse Bridge app.
-2. **Start Server:** The app will run a local server in the background and display an addon URL on the screen (e.g., `http://127.0.0.1:8080/manifest.json`).
-
-### Usage with Stremio
-
-1. Copy the addon URL provided in the CNCVerse Bridge app.
-2. **Important:** Enable the "Stremio Mode" toggle in the CNCVerse Bridge app if you are using it with Stremio.
-3. Open the **Stremio** app and go to the **Addons** section.
-4. Paste the copied URL into the search bar or addon URL field.
-5. Tap **Install** to add the CNCVerse Bridge addon.
-
-### Usage with Nuvio
-
-1. Ensure the CNCVerse Bridge app is running in the background.
-2. Open the **Nuvio** app.
-3. Nuvio will automatically detect the local CNCVerse Bridge addon—no manual URL pasting is required!
+1. **Install and Run:** Install the downloaded `.apk` and open CNCVerse Bridge.
+2. **Start Server:** Tap **Start Server**.
+3. **Usage with Stremio:**
+   - Enable the **Stremio Mode** toggle.
+   - Copy the addon URL shown on screen (e.g. `http://127.0.0.1:8080/manifest.json` or your Cloudflare tunnel link).
+   - In Stremio, go to **Addons** → Paste the URL → Tap **Install**.
+4. **Usage with Nuvio:**
+   - Keep CNCVerse Bridge running in the background.
+   - Open **Nuvio** — it will auto-detect the local bridge automatically!
 
 ---
 
-## Getting Started (Desktop)
+### Getting Started on Desktop (Windows)
 
-1. **Install and Run:** Install the `.msi` (Windows) or run the desktop app. 
-2. The app will launch and display the server status and the local addon URL.
-3. **Same-Device Streaming:** If you run Stremio on the same computer, you can click the **Add to Stremio** button or manually add `http://127.0.0.1:8080/manifest.json` in Stremio.
-4. **Local Network Streaming:** You can also use the Desktop app to host the bridge for other devices on your Wi-Fi network. Simply use the local IP address shown in the app (e.g., `http://192.168.1.100:8080/manifest.json`) on your TV or phone.
-
-### ⚠️ Desktop Limitations
-
-Currently, the Desktop version lacks full **WebView support**. This means:
-- Features relying on Cloudflare bypass (which uses a hidden WebView) will not work.
-- FebBox / ShowBox login flows that require a web interface will fail.
-For full compatibility with these specific providers, please use the Android version.
+1. Run the desktop application.
+2. The server will start and display your local IP and addon URL.
+3. **Same-Device Streaming:** Click **Add to Stremio** or paste `http://127.0.0.1:8080/manifest.json` into Stremio.
+4. **Local Network Streaming:** Host for your TV or phone by using the local network IP shown in the app (e.g. `http://192.168.1.100:8080/manifest.json`).
 
 ---
 
-## Support & Community
+## ⚙️ Extension Settings (`ext_settings.txt`)
 
-Join our **[Telegram group](https://t.me/cncverse)** to discuss extensions, request features, or report issues.
+You can configure provider accounts, scraper concurrency, and tokens either in the Web UI (`http://127.0.0.1:8080`) or via `ext_settings.txt` (see [`ext_settings.example.txt`](ext_settings.example.txt)):
 
-If you find this project useful, consider supporting the development!  
-**[☕ Buy Me a Coffee](https://buymeacoffee.com/nivincnc)**
+```ini
+# FebBox token for premium link resolver
+token=your_febbox_token
+
+# ShowBox / FebBox UI Token
+showbox_ui_token=your_showbox_token
+
+# Scraper Concurrency (-1 = unlimited, default = 10)
+ScrapeConcurrency=10
+```
 
 ---
 
-## License
+## 💬 Support & Community
+
+- Join our **[Telegram Group](https://t.me/cncverse)** for discussions, updates, and troubleshooting.
+- If you find this project useful, consider supporting development:  
+  **[☕ Buy Me a Coffee](https://buymeacoffee.com/nivincnc)**
+
+---
+
+## 📄 License
 
 All rights reserved. No part of this codebase may be copied, modified, distributed, or otherwise used without explicit permission from the copyright owner.
 

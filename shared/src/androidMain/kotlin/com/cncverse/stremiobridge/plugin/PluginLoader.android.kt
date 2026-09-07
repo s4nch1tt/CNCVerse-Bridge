@@ -8,6 +8,7 @@ import android.os.Looper
 import android.util.Log
 import com.lagradost.cloudstream3.plugins.Plugin
 import com.cncverse.stremiobridge.model.SitePlugin
+import com.cncverse.stremiobridge.model.PluginManifest
 import com.cncverse.stremiobridge.model.StremioStream
 import com.cncverse.stremiobridge.model.StreamBehaviorHints
 import com.cncverse.stremiobridge.model.ProxyHeaders
@@ -48,7 +49,7 @@ actual class PluginLoader(private val context: Context) {
         cs3Files: Map<String, File>,
     ): List<LoadedPluginInfo> = withContext(Dispatchers.IO) {
         configureAppClientNetwork()
-        val pluginContext = awaitForegroundActivity()
+        val pluginContext = PluginUIContext.currentActivity ?: context
         val loadedList = plugins.mapNotNull { plugin ->
             val file = cs3Files[plugin.internalName] ?: run {
                 ServerState.warn("No .cs3 file for '${plugin.name}', skipping")
@@ -233,12 +234,6 @@ actual class PluginLoader(private val context: Context) {
         @Suppress("DEPRECATION")
         return Resources(assets, context.resources.displayMetrics, context.resources.configuration)
     }
-    private suspend fun awaitForegroundActivity(): Context {
-        if (PluginUIContext.currentActivity == null) {
-            ServerState.info("Waiting for the app screen before loading UI-dependent plugins")
-        }
-        return PluginUIContext.awaitActivity()
-    }
 
     private fun getApiHolderProviders(loader: ClassLoader): List<Any> {
         return try {
@@ -326,14 +321,6 @@ actual class PluginLoader(private val context: Context) {
         ServerState.info("All plugins unloaded")
     }
 }
-
-@Serializable
-private data class PluginManifest(
-    val name: String? = null,
-    val pluginClassName: String? = null,
-    val requiresResources: Boolean = false,
-    val version: Int? = null,
-)
 
 private class ReflectionMainApiWrapper(
     private val api: Any,
