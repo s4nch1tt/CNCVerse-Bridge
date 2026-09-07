@@ -9,7 +9,7 @@ on:
 
 permissions:
   actions: write
-  contents: read
+  contents: write
 
 concurrency:
   group: deploy-bridge-24-7
@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -34,24 +36,32 @@ jobs:
           curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
           sudo dpkg -i cloudflared.deb
 
-      - name: Restore Bridge Data & Extensions Cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cncverse
-            ~/.cncverse_bridge
-          key: cncverse-bridge-cache-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            cncverse-bridge-cache-
-
-      - name: Configure Storage & Extension Settings
+      - name: Restore Bridge Data & Extensions
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EXTENSION_SETTINGS: ${{ secrets.EXTENSION_SETTINGS }}
           INSTALLED_PLUGINS: ${{ secrets.INSTALLED_PLUGINS }}
           REPO_URLS: ${{ secrets.REPO_URLS }}
         run: |
           mkdir -p ~/.cncverse
-          mkdir -p ~/.cncverse_bridge
+          mkdir -p ~/.cncverse_bridge/plugins
+
+          # 1. Restore from bridge-data git branch if exists
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin bridge-data:bridge-data 2>/dev/null || true
+          if git rev-parse --verify bridge-data >/dev/null 2>&1; then
+            git archive bridge-data | tar -x -C ~/.cncverse_bridge 2>/dev/null || true
+            if [ -f ~/.cncverse_bridge/ext_settings.txt ]; then
+              cp ~/.cncverse_bridge/ext_settings.txt ~/.cncverse/ext_settings.txt
+            fi
+            if [ -f ~/.cncverse_bridge/repos.txt ]; then
+              cp ~/.cncverse_bridge/repos.txt ~/.cncverse/repos.txt
+            fi
+            echo "✅ Restored installed plugins and settings from bridge-data branch!"
+          fi
+
+          # 2. Apply GitHub secrets (if provided)
           if [ -n "$EXTENSION_SETTINGS" ]; then
             echo "$EXTENSION_SETTINGS" > ~/.cncverse/ext_settings.txt
             echo "Loaded EXTENSION_SETTINGS secret into ~/.cncverse/ext_settings.txt"
@@ -73,6 +83,35 @@ jobs:
           HEADLESS: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # 1. Launch Continuous Persistence Sync Daemon (syncs every 60s to bridge-data branch)
+          (
+            while true; do
+              sleep 60
+              if [ -d "$HOME/.cncverse_bridge" ]; then
+                TMP_DATA=$(mktemp -d)
+                cp -r "$HOME/.cncverse_bridge"/* "$TMP_DATA/" 2>/dev/null || true
+                if [ -f "$HOME/.cncverse/ext_settings.txt" ]; then
+                  cp "$HOME/.cncverse/ext_settings.txt" "$TMP_DATA/" 2>/dev/null || true
+                fi
+                if [ -f "$HOME/.cncverse/repos.txt" ]; then
+                  cp "$HOME/.cncverse/repos.txt" "$TMP_DATA/" 2>/dev/null || true
+                fi
+                cd "$TMP_DATA"
+                git init -q
+                git config user.name "github-actions[bot]"
+                git config user.email "github-actions[bot]@users.noreply.github.com"
+                git checkout -q -B bridge-data
+                git add -A
+                if ! git diff-index --quiet HEAD 2>/dev/null; then
+                  git commit -q -m "chore: auto-sync installed extensions & settings [skip ci]"
+                  git push -q -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" bridge-data >/dev/null 2>&1 || true
+                fi
+                cd - >/dev/null
+                rm -rf "$TMP_DATA"
+              fi
+            done
+          ) &
+          SYNC_PID=$!
           echo "Compiling CNCVerse Bridge Desktop module..."
           ./gradlew :desktopApp:compileKotlinDesktop --no-daemon
 
