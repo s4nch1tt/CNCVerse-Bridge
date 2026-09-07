@@ -98,7 +98,7 @@ jobs:
           echo "Waiting for Cloudflare Tunnel URL..."
           TUNNEL_URL=""
           for i in {1..30}; do
-            TUNNEL_URL=$(grep -o 'https://[-a-zA-Z0-9]\+\.trycloudflare\.com' tunnel.log | head -n 1)
+            TUNNEL_URL=$(grep -Eo 'https://[-a-zA-Z0-9.]+\.trycloudflare\.com' tunnel.log | head -n 1)
             if [ -n "$TUNNEL_URL" ]; then
               break
             fi
