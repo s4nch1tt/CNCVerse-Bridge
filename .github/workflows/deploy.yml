@@ -77,8 +77,8 @@ jobs:
 
       - name: Launch Server & Cloudflare Tunnel
         env:
-          CF_WORKER_URL: ${{ secrets.CF_WORKER_URL }}
-          CF_WORKER_SECRET: ${{ secrets.CF_WORKER_SECRET }}
+          CF_WORKER_URL: ${{ secrets.CF_WORKER_URL || secrets.WORKER_URL || secrets.CLOUDFLARE_WORKER_URL || 'https://late-disk-c21b.d387933639.workers.dev' }}
+          CF_WORKER_SECRET: ${{ secrets.CF_WORKER_SECRET || secrets.WORKER_SECRET || 'cncverse_secret_2026' }}
           AUTO_INSTALL_EXTENSIONS: ${{ secrets.AUTO_INSTALL_EXTENSIONS || '' }}
           HEADLESS: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
