@@ -485,13 +485,8 @@ private class DirectMainApiWrapper(
     override val name: String get() = api.name
     override val internalName: String get() = plugin.internalName + "_" + api.name.replace(Regex("[^A-Za-z0-9]"), "")
     override val supportedTypes: List<String> get() {
-        val hasLive = api.supportedTypes.any { it.name.equals("Live", ignoreCase = true) }
-        val isOnlyLive = api.supportedTypes.size == 1 && hasLive
-        return when {
-            isOnlyLive -> listOf("tv")
-            hasLive -> listOf("movie", "tv")
-            else -> listOf("movie")
-        }
+        val types = api.supportedTypes.map { cs3TvTypeToStremio(it.name) }.distinct().filter { it.isNotBlank() }
+        return if (types.isEmpty()) listOf("movie") else types
     }
 
     private var dynamicSectionsCache: List<String>? = null
@@ -664,7 +659,8 @@ private fun inferTypeFromClass(cls: Class<*>): String? {
             cs3TvTypeToStremio("TvSeries")
         simpleName.contains("Live", ignoreCase = true) ->
             cs3TvTypeToStremio("Live")
-        // AnimeSearchResponse/AnimeLoadResponse etc are genuinely ambiguous — fall through
+        simpleName.contains("Anime", ignoreCase = true) ->
+            cs3TvTypeToStremio("Anime")
         else -> null
     }
 }
@@ -995,7 +991,7 @@ private fun Any.reflectToSubtitle(pluginName: String): StremioSubtitle? {
 private class MetadataOnlyWrapper(private val plugin: SitePlugin) : MainApiWrapper {
     override val name: String get() = plugin.name
     override val internalName: String get() = plugin.internalName
-    override val supportedTypes: List<String> get() = plugin.tvTypes ?: listOf("movie")
+    override val supportedTypes: List<String> get() = plugin.tvTypes?.map { cs3TvTypeToStremio(it) }?.distinct()?.filter { it.isNotBlank() } ?: listOf("movie")
     override suspend fun getMainPageSections(): List<String> = emptyList()
     override suspend fun search(query: String): List<SearchResult> = emptyList()
     override suspend fun getMainPage(page: Int, type: String, sectionName: String?): List<SearchResult> = emptyList()
