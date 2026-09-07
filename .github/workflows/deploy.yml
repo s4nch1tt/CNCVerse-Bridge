@@ -62,37 +62,55 @@ jobs:
           AUTO_INSTALL_EXTENSIONS: ${{ secrets.AUTO_INSTALL_EXTENSIONS || 'all' }}
           HEADLESS: "1"
         run: |
-          # 1. Start Headless Server in background
-          ./gradlew :desktopApp:run --args="headless" &
+          echo "Building CNCVerse Bridge Desktop module..."
+          ./gradlew :desktopApp:classes --no-daemon
+
+          echo "Starting Headless Server in background..."
+          ./gradlew :desktopApp:run --args="headless" --no-daemon > server.log 2>&1 &
           SERVER_PID=$!
 
           echo "Waiting for Stremio HTTP server to bind port 8080..."
-          for i in {1..30}; do
+          SERVER_UP=0
+          for i in {1..60}; do
             if curl -s http://127.0.0.1:8080/manifest.json > /dev/null; then
               echo "✅ Stremio HTTP server is UP and responding on port 8080!"
+              SERVER_UP=1
               break
             fi
             sleep 2
           done
 
-          # 2. Launch Cloudflare Tunnel
-          cloudflared tunnel --url http://127.0.0.1:8080 --no-autoupdate > tunnel.log 2>&1 &
-          sleep 8
+          if [ "$SERVER_UP" -eq 0 ]; then
+            echo "❌ Stremio HTTP server did not respond on port 8080 in time. Server log:"
+            cat server.log
+          fi
 
-          # 3. Extract generated trycloudflare URL
-          TUNNEL_URL=$(grep -o 'https://[-a-zA-Z0-9]\+\.trycloudflare\.com' tunnel.log | head -n 1)
+          echo "Launching Cloudflare Tunnel..."
+          cloudflared tunnel --url http://127.0.0.1:8080 --no-autoupdate > tunnel.log 2>&1 &
+
+          echo "Waiting for Cloudflare Tunnel URL..."
+          TUNNEL_URL=""
+          for i in {1..30}; do
+            TUNNEL_URL=$(grep -o 'https://[-a-zA-Z0-9]\+\.trycloudflare\.com' tunnel.log | head -n 1)
+            if [ -n "$TUNNEL_URL" ]; then
+              break
+            fi
+            sleep 1
+          done
+
           echo "========================================="
           echo "🚀 Live Cloudflare Tunnel URL: $TUNNEL_URL"
           echo "========================================="
 
-          # 4. Sync URL to Cloudflare Worker Gateway (if configured)
           if [ -n "$CF_WORKER_URL" ]; then
-            curl -s -X POST "$CF_WORKER_URL/__update_backend" \
+            RESPONSE=$(curl -s -X POST "$CF_WORKER_URL/__update_backend" \
               -H "Authorization: Bearer $CF_WORKER_SECRET" \
               -H "Content-Type: application/json" \
-              -d "{\"backend_url\": \"$TUNNEL_URL\"}"
-            echo "✅ Synced tunnel URL with Cloudflare Worker: $CF_WORKER_URL"
+              -d "{\"backend_url\": \"$TUNNEL_URL\"}")
+            echo "✅ Synced tunnel URL with Cloudflare Worker: $CF_WORKER_URL (Response: $RESPONSE)"
+          else
+            echo "⚠️ CF_WORKER_URL secret is NOT set in GitHub Repository Secrets! Please add CF_WORKER_URL and CF_WORKER_SECRET in Settings -> Secrets and variables -> Actions."
           fi
 
-          # 5. Keep runner alive for 5 hours (17500s)
+          # Keep runner alive for 5 hours (17500s)
           sleep 17500
