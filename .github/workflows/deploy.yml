@@ -105,9 +105,13 @@ jobs:
             sleep 1
           done
 
-          echo "========================================="
+          echo "=========================================================="
           echo "🚀 Live Cloudflare Tunnel URL: $TUNNEL_URL"
-          echo "========================================="
+          if [ -n "$CF_WORKER_URL" ]; then
+            echo "🌐 Permanent Gateway URL:      $CF_WORKER_URL"
+            echo "📺 Stremio Addon Install URL:  $CF_WORKER_URL/manifest.json"
+          fi
+          echo "=========================================================="
 
           if [ -n "$CF_WORKER_URL" ]; then
             RESPONSE=$(curl -s -X POST "$CF_WORKER_URL/__update_backend" \
@@ -115,6 +119,19 @@ jobs:
               -H "Content-Type: application/json" \
               -d "{\"backend_url\": \"$TUNNEL_URL\"}")
             echo "✅ Synced tunnel URL with Cloudflare Worker: $CF_WORKER_URL (Response: $RESPONSE)"
+
+            # Render GitHub Actions Step Summary markdown
+            if [ -n "$GITHUB_STEP_SUMMARY" ]; then
+              echo "## 🎬 CNCVerse Bridge 24/7 is LIVE!" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "| Service | URL |" >> $GITHUB_STEP_SUMMARY
+              echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+              echo "| 🌐 **Permanent Gateway** | \`$CF_WORKER_URL\` |" >> $GITHUB_STEP_SUMMARY
+              echo "| 📺 **Stremio Addon URL** | [\`$CF_WORKER_URL/manifest.json\`]($CF_WORKER_URL/manifest.json) |" >> $GITHUB_STEP_SUMMARY
+              echo "| ⚡ **Direct Cloudflare Tunnel** | [\`$TUNNEL_URL\`]($TUNNEL_URL) |" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "👉 **Install in Stremio:** Paste \`$CF_WORKER_URL/manifest.json\` into the Stremio Addons search bar." >> $GITHUB_STEP_SUMMARY
+            fi
           else
             echo "⚠️ CF_WORKER_URL secret is NOT set in GitHub Repository Secrets! Please add CF_WORKER_URL and CF_WORKER_SECRET in Settings -> Secrets and variables -> Actions."
           fi
