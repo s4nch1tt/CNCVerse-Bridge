@@ -2,8 +2,14 @@ name: Deploy CNCVerse Bridge 24/7
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ main ]
   schedule:
     - cron: '0 */5 * * *'
+
+permissions:
+  actions: write
+  contents: read
 
 jobs:
   run-bridge:
@@ -61,6 +67,7 @@ jobs:
           CF_WORKER_SECRET: ${{ secrets.CF_WORKER_SECRET }}
           AUTO_INSTALL_EXTENSIONS: ${{ secrets.AUTO_INSTALL_EXTENSIONS || 'all' }}
           HEADLESS: "1"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Building CNCVerse Bridge Desktop module..."
           ./gradlew :desktopApp:classes --no-daemon
@@ -112,5 +119,10 @@ jobs:
             echo "⚠️ CF_WORKER_URL secret is NOT set in GitHub Repository Secrets! Please add CF_WORKER_URL and CF_WORKER_SECRET in Settings -> Secrets and variables -> Actions."
           fi
 
-          # Keep runner alive for 5 hours (17500s)
-          sleep 17500
+          # Keep runner alive for 4 hours 50 minutes (17400s)
+          echo "CNCVerse Bridge is running in 24/7 mode..."
+          sleep 17400
+
+          # Seamlessly trigger next cycle before this job ends
+          echo "Triggering next 24/7 cycle..."
+          gh workflow run "Deploy CNCVerse Bridge 24/7" || true
