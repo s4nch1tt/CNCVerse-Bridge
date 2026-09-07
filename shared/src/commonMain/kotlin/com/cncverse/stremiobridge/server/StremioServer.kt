@@ -448,7 +448,7 @@ object StremioServer {
                 listOf(StremioCatalogDef("movie", "cnc_all_movie", "CNCVerse (Movie)"))
             }
 
-        val manifestVersion = "1.0.${activeApis.size}.${kotlin.math.abs(activeApis.sumOf { it.internalName.hashCode() }) % 10000}"
+        val manifestVersion = "1.${activeApis.size}.${kotlin.math.abs(activeApis.sumOf { it.internalName.hashCode() }) % 1000}"
 
         return StremioManifest(
             id          = "com.cncverse.stremiobridge",
