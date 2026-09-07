@@ -50,11 +50,11 @@ flowchart LR
      * Under **Environment Variables**, click **Add variable**:
        * Variable name: `CF_WORKER_SECRET`
        * Value: Any secret password of your choice (e.g. `my_secure_secret_123`)
-   * Click **Save and Deploy**.
-5. Paste the Worker Code:
-   * On your Worker page, click **Edit Code** (top right).
-   * Replace the editor content with the code from [`cloudflare-worker/stremio-gateway.js`](cloudflare-worker/stremio-gateway.js).
-   * Click **Deploy**.
+5. **Paste the 1-Line Gateway Code:**
+   * Open your Worker page → Tap **Edit code** → Replace everything with this 1-line snippet and tap **Deploy**:
+   ```javascript
+   export default{async fetch(request,env){const url=new URL(request.url);if(url.pathname==="/__update_backend"&&request.method==="POST"){const auth=request.headers.get("Authorization")||"";if(!auth.includes(env.CF_WORKER_SECRET||"deep@2005"))return new Response("Unauthorized",{status:401});const data=await request.json();await env.STREMIO_KV.put("BACKEND",data.backend_url);return new Response(JSON.stringify({status:"ok"}),{headers:{"content-type":"application/json"}});}const backend=await env.STREMIO_KV.get("BACKEND");if(!backend)return new Response("Server starting up. Please wait 30 seconds.",{status:503});const target=new URL(url.pathname+url.search,backend);const headers=new Headers(request.headers);headers.set("X-Forwarded-Host",url.host);headers.set("X-Forwarded-Proto","https");return fetch(target.toString(),{method:request.method,headers:headers,body:request.body,redirect:"follow"});}};
+   ```
 6. **Copy your Worker URL** (e.g. `https://cncverse-bridge.<your-subdomain>.workers.dev`).
 
 ---
