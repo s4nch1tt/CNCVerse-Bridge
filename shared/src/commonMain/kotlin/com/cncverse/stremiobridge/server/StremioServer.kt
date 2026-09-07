@@ -508,7 +508,7 @@ object StremioServer {
 
     private fun sortStreamsByQuality(streams: List<StremioStream>): List<StremioStream> {
         fun extractScore(stream: StremioStream): Int {
-            val text = "${stream.name.orEmpty()} ${stream.title.orEmpty()} ${stream.description.orEmpty()}".lowercase()
+            val text = "${stream.name.orEmpty()} ${stream.title.orEmpty()}".lowercase()
             
             // Base resolution score
             val resScore = when {
