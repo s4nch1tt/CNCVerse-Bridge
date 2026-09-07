@@ -40,20 +40,20 @@ flowchart LR
    * Click **Deploy**.
 3. Create a **KV Namespace**:
    * On the left sidebar under **Workers & Pages**, click **KV**.
-   * Click **Create a Namespace** → Name it **`STREMIO_KV`** → click **Add**.
+   * Click **Create a Namespace** → Name it **`CNC_BRIDGE_KV`** → click **Add**.
 4. Configure Worker Settings:
    * Go back to **Workers & Pages** → click on your `cncverse-bridge` worker → **Settings**.
    * Go to **Bindings** (or **Variables and Secrets**):
      * Under **KV Namespace Bindings**, click **Add binding**:
-       * Variable name: `STREMIO_KV`
-       * KV namespace: select `STREMIO_KV`
+       * Variable name: `CNC_BRIDGE_KV`
+       * KV namespace: select `CNC_BRIDGE_KV`
      * Under **Environment Variables**, click **Add variable**:
        * Variable name: `CF_WORKER_SECRET`
        * Value: Any secret password of your choice (e.g. `my_secure_secret_123`)
 5. **Paste the 1-Line Gateway Code:**
    * Open your Worker page → Tap **Edit code** → Replace everything with this 1-line snippet and tap **Deploy**:
    ```javascript
-   export default{async fetch(request,env){const url=new URL(request.url);if(url.pathname==="/__update_backend"&&request.method==="POST"){const auth=request.headers.get("Authorization")||"";if(!auth.includes(env.CF_WORKER_SECRET||"deep@2005"))return new Response("Unauthorized",{status:401});const data=await request.json();await env.STREMIO_KV.put("BACKEND",data.backend_url);return new Response(JSON.stringify({status:"ok"}),{headers:{"content-type":"application/json"}});}const backend=await env.STREMIO_KV.get("BACKEND");if(!backend)return new Response("Server starting up. Please wait 30 seconds.",{status:503});const target=new URL(url.pathname+url.search,backend);const headers=new Headers(request.headers);headers.set("X-Forwarded-Host",url.host);headers.set("X-Forwarded-Proto","https");return fetch(target.toString(),{method:request.method,headers:headers,body:request.body,redirect:"follow"});}};
+   export default{async fetch(request,env){const url=new URL(request.url);if(url.pathname==="/__update_backend"&&request.method==="POST"){const auth=(request.headers.get("Authorization")||"").replace(/^Bearer\s+/i,"");const secret=env.CF_WORKER_SECRET||"cncverse_secret_2026";if(auth!==secret)return new Response("Unauthorized",{status:401});const data=await request.json();await env.CNC_BRIDGE_KV.put("BACKEND",data.backend_url);return new Response(JSON.stringify({status:"ok"}),{headers:{"content-type":"application/json"}});}const backend=await env.CNC_BRIDGE_KV.get("BACKEND");if(!backend)return new Response("CNCVerse Bridge starting up. Please wait 30 seconds.",{status:503});const target=new URL(url.pathname+url.search,backend);const headers=new Headers(request.headers);headers.set("X-Forwarded-Host",url.host);headers.set("X-Forwarded-Proto","https");return fetch(target.toString(),{method:request.method,headers:headers,body:request.body,redirect:"follow"});}};
    ```
 6. **Copy your Worker URL** (e.g. `https://cncverse-bridge.<your-subdomain>.workers.dev`).
 
