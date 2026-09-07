@@ -65,7 +65,7 @@ jobs:
         env:
           CF_WORKER_URL: ${{ secrets.CF_WORKER_URL }}
           CF_WORKER_SECRET: ${{ secrets.CF_WORKER_SECRET }}
-          AUTO_INSTALL_EXTENSIONS: ${{ secrets.AUTO_INSTALL_EXTENSIONS || 'all' }}
+          AUTO_INSTALL_EXTENSIONS: ${{ secrets.AUTO_INSTALL_EXTENSIONS || '' }}
           HEADLESS: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

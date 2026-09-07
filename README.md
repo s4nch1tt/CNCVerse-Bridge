@@ -69,8 +69,9 @@ flowchart LR
 | :--- | :---: | :--- |
 | `CF_WORKER_URL` | **Yes** | Your Cloudflare Worker URL, e.g. `https://cncverse-bridge.<your-subdomain>.workers.dev` |
 | `CF_WORKER_SECRET` | **Yes** | The exact secret password you set in Cloudflare (e.g. `my_secure_secret_123`) |
-| `AUTO_INSTALL_EXTENSIONS` | *Optional* | `all` (default) or comma-separated list of extensions (e.g. `SuperStream,Sorastream,SFlix`) |
+| `AUTO_INSTALL_EXTENSIONS` | *Optional* | Optional comma-separated list of extensions to install (e.g. `SuperStream,Sorastream,SFlix`). Leave empty to only keep and auto-update your installed plugins. |
 | `EXTENSION_SETTINGS` | *Optional* | Content of your `ext_settings.txt` (FebBox tokens, ShowBox tokens, scraper settings) |
+| `INSTALLED_PLUGINS` | *Optional* | Content of `installed_plugins.json` (to restore specific installed extensions across runners) |
 | `REPO_URLS` | *Optional* | Additional repository URLs (one per line) |
 
 ---
