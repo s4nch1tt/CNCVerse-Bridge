@@ -11,6 +11,10 @@ permissions:
   actions: write
   contents: read
 
+concurrency:
+  group: deploy-bridge-24-7
+  cancel-in-progress: false
+
 jobs:
   run-bridge:
     runs-on: ubuntu-latest
