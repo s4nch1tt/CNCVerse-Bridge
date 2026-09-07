@@ -69,8 +69,8 @@ jobs:
           HEADLESS: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Building CNCVerse Bridge Desktop module..."
-          ./gradlew :desktopApp:classes --no-daemon
+          echo "Compiling CNCVerse Bridge Desktop module..."
+          ./gradlew :desktopApp:compileKotlinDesktop --no-daemon
 
           echo "Starting Headless Server in background..."
           ./gradlew :desktopApp:run --args="headless" --no-daemon > server.log 2>&1 &
